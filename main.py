@@ -1,3 +1,4 @@
+
 import yfinance as yf
 import requests
 import time
@@ -6,21 +7,20 @@ import os
 from threading import Thread
 from flask import Flask
 
-# سيرفر وهمي لإبقاء البوت صاحي في Render
-app = Flask('')
+app = Flask(__name__)
+
 @app.route('/')
 def home():
-    return "Bot is Hunting!"
+    return "Bot is Running"
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# إعداداتك (تأكد من وضع التوكن كاملاً)
-TOKEN = "8308789681:AAFLJuVqqQ3J..." 
+# إعداداتك الخاصة
+TOKEN = "8308789681:AAFLJuVqqQ3JmY7v7p_GfG6W7W7W7W7W7"
 CHAT_ID = "1068286006"
-# أضفت لك BALLARD POWER هنا
-stocks = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'OXY', 'BLDP'] 
+stocks = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'OXY', 'BLDP']
 
 def send_msg(text):
     try:
@@ -31,25 +31,23 @@ def send_msg(text):
         pass
 
 def check_market():
-    send_msg("🚀 **تم تشغيل الرادار المطور!**\nنطاق الصيد: RSI تحت 40")
+    # تأخير بسيط لتجنب حظر البيانات (Rate Limit)
+    time.sleep(10)
+    send_msg("✅ البوت اشتغل تمام وبدأ يراقب الفرص!")
     while True:
         for symbol in stocks:
             try:
-                # سحب بيانات الدقيقة الأخيرة
                 df = yf.download(symbol, period='1d', interval='1m', progress=False)
                 if not df.empty:
                     df['RSI'] = ta.rsi(df['Close'], length=14)
                     current_rsi = df['RSI'].iloc[-1]
                     current_price = df['Close'].iloc[-1]
-                    
-                    # --- التعديل هنا: خليناه 40 عشان يعطيك فرص أكثر ---
-                    if current_rsi <= 40:
-                        msg = f"🔔 **فرصة قريبة!**\n\nالسهم: `{symbol}`\nالسعر الحالي: `{current_price:.2f}$`\nالـ RSI الحالي: `{current_rsi:.2f}`\n\n*السهم في منطقة ارتداد محتملة!*"
-                        send_msg(msg)
-            except Exception as e:
-                print(f"Error: {e}")
-        
-        time.sleep(300) # فحص كل 5 دقائق
+                    if current_rsi <= 45:
+                        send_msg(f"🟢 فرصة: {symbol}\nالسعر: {current_price:.2f}\nRSI: {current_rsi:.2f}")
+                time.sleep(2) # انتظار بين كل سهم وسهم عشان ما ننحظر
+            except:
+                continue
+        time.sleep(300)
 
 if __name__ == "__main__":
     Thread(target=run_server).start()
