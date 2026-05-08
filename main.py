@@ -8,71 +8,48 @@ from flask import Flask
 app = Flask(__name__)
 
 @app.route('/')
-def home():
-    return "Ultra-Pro Analyzer: Online"
+def home(): 
+    return "Transparency-Bot: Active"
 
 TOKEN = "8308789681:AAFLJuVqqQ3Jqtgth51in4IZpN1X_1aZYAE"
 CHAT_ID = "1068286006"
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
-    try: requests.post(url, json=payload, timeout=5)
+    try: requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=5)
     except: pass
 
 def start_bot():
-    send_message("💎 <b>تم تفعيل (المحلل الأسطوري)!</b>\nسأجمع لكِ بين دقة التحليل وكثرة التنبيهات.")
+    send_message("📡 <b>الرادار متصل الآن..</b>\nسأقوم بإرسال الصفقات فور تحقق شروط الـ RSI.")
     
-    symbols = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD', 'AMZN', 'MSFT', 'COIN', 'PLTR']
+    symbols = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMD']
     
     while True:
         for symbol in symbols:
             try:
-                # بيانات دقيقة واحدة لأقصى دقة في التوقيت
                 data = yf.download(symbol, period='1d', interval='1m', progress=False)
-                if data.empty: continue
+                
+                if data.empty or len(data) < 20:
+                    continue
 
-                # مدرسة RSI
                 rsi = ta.rsi(data['Close'], length=14).iloc[-1]
-                # مدرسة البولنجر
-                bbands = ta.bbands(data['Close'], length=20, std=2)
-                # مدرسة المتوسطات
-                ma_fast = data['Close'].rolling(5).mean().iloc[-1]
-                ma_slow = data['Close'].rolling(20).mean().iloc[-1]
-
                 price = data['Close'].iloc[-1]
-                upper_b = bbands['BBU_20_2.0'].iloc[-1]
-                lower_b = bbands['BBL_20_2.0'].iloc[-1]
+                
+                # طباعة في اللوج للتأكد من العمل
+                print(f"Checking {symbol}: RSI {rsi:.2f}")
 
-                # --- نظام النقاط الذهبي ---
-                score = 0
-                signal = ""
-                
-                # تحليل CALL
-                if price < ma_fast or rsi < 50:
-                    signal = "CALL 🟢"
-                    if rsi < 40: score += 1
-                    if price <= lower_b: score += 1
-                    if ma_fast > ma_slow: score += 1
-                
-                # تحليل PUT
-                else:
-                    signal = "PUT 🔴"
-                    if rsi > 60: score += 1
-                    if price >= upper_b: score += 1
-                    if ma_fast < ma_slow: score += 1
-
-                # إرسال التنبيه (أي شيء فوق الصفر يرسله)
-                conf = "🔥 قوية جداً" if score >= 2 else "🟡 جيدة" if score == 1 else "⚪️ ضعيفة/مضاربة"
-                
-                msg = (f"🚀 <b>{symbol}</b> | {signal}\n"
-                       f"📊 التحليل: {conf}\n"
-                       f"💰 السعر: ${price:.2f}\n"
-                       f"📍 الهدف: ${upper_b if 'CALL' in signal else lower_b:.2f}")
-                
-                send_message(msg)
-                time.sleep(1)
-            except: pass
+                # شروط مرنة للإرسال السريع
+                if rsi < 45: # CALL
+                    msg = f"🟢 <b>فرصة CALL: {symbol}</b>\n📈 RSI: {int(rsi)}\n💰 السعر: ${price:.2f}"
+                    send_message(msg)
+                    time.sleep(2)
+                elif rsi > 55: # PUT
+                    msg = f"🔴 <b>فرصة PUT: {symbol}</b>\n📈 RSI: {int(rsi)}\n💰 السعر: ${price:.2f}"
+                    send_message(msg)
+                    time.sleep(2)
+            except:
+                pass
+        
         time.sleep(15)
 
 if __name__ == "__main__":
