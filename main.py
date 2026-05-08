@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is Active: Monitoring RSI + Company News!"
+    return "Scalper Bot: Entry, Exit, and Strikes are Active!"
 
 TOKEN = "8308789681:AAFLJuVqqQ3Jqtgth51in4IZpN1X_1aZYAE"
 CHAT_ID = "1068286006"
@@ -17,55 +17,61 @@ CHAT_ID = "1068286006"
 def send_message(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
-    try:
-        requests.post(url, json=payload)
-    except:
-        pass
-
-def get_company_news(symbol):
-    try:
-        ticker = yf.Ticker(symbol)
-        news = ticker.news[:2] # سحب آخر خبرين فقط
-        news_text = "\n<b>📰 آخر الأخبار:</b>"
-        for item in news:
-            title = item.get('title', 'لا يوجد عنوان')
-            link = item.get('link', '#')
-            news_text += f"\n• <a href='{link}'>{title}</a>"
-        return news_text
-    except:
-        return ""
+    try: requests.post(url, json=payload)
+    except: pass
 
 def start_bot():
-    send_message("🚀 <b>تم تحديث البوت بنجاح!</b>\nجاري مراقبة المؤشرات والأخبار لـ 12 شركة قيادية.")
-    
-    symbols = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMZN', 'MSFT', 'META', 'GOOGL', 'NFLX', 'OXY', 'BLDP']
+    send_message("🛡️ <b>نظام إدارة الصفقات نشط!</b>\nسأعطيكِ الأهداف، السترايك، ونقطة الخروج الإجبارية.")
+    symbols = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'AMZN', 'MSFT', 'META']
     
     while True:
         for symbol in symbols:
             try:
                 ticker = yf.Ticker(symbol)
-                data = ticker.history(period='2d', interval='5m')
+                data = ticker.history(period='5d', interval='5m')
                 
                 if not data.empty:
                     data['RSI'] = ta.rsi(data['Close'], length=14)
-                    current_rsi = data['RSI'].iloc[-1]
-                    current_price = data['Close'].iloc[-1]
+                    price = data['Close'].iloc[-1]
+                    rsi = data['RSI'].iloc[-1]
+                    vol = data['Volume'].iloc[-1]
+                    avg_vol = data['Volume'].mean()
                     
-                    # التنبيه تحت RSI 50 عشان يعطيك تنبيهات أكثر في البداية
-                    if current_rsi < 50:
-                        news = get_company_news(symbol)
-                        msg = (f"🎯 <b>فرصة صيد: {symbol}</b>\n"
-                               f"💰 السعر الحالي: ${current_price:.2f}\n"
-                               f"📉 مؤشر RSI: {current_rsi:.2f}\n"
-                               f"{news}\n\n"
-                               f"🔗 <a href='https://tradingview.com/symbols/{symbol}'>تحليل الشارت</a>")
+                    # تحليل مستويات الشارت (القمم والقيعان)
+                    resistance = data['High'].max()
+                    support = data['Low'].min()
+                    
+                    msg = ""
+                    # --- سيناريو الـ CALL ---
+                    if rsi < 45:
+                        strike = round(price + (price * 0.01))
+                        stop_loss = support * 0.995 # خروج إذا كسر الدعم بـ 0.5%
+                        msg = (f"🟢 <b>صفقة مضاربة: {symbol} [CALL]</b>\n"
+                               f"🔹 <b>سعر الدخول الحالي:</b> ${price:.2f}\n"
+                               f"🎫 <b>السترايك المقترح:</b> ${strike}\n\n"
+                               f"🎯 <b>الأهداف:</b> ${price * 1.01:.2f} ثم ${resistance:.2f}\n"
+                               f"⚠️ <b>نقطة الخروج (إلزامي):</b> إذا كسر ${stop_loss:.2f}\n\n"
+                               f"💡 <i>ملاحظة: إذا نزل السعر تحت الخروج، العقد بيفقد قيمته بسرعة، اطلعي فوراً!</i>")
+
+                    # --- سيناريو الـ PUT ---
+                    elif rsi > 65:
+                        strike = round(price - (price * 0.01))
+                        stop_loss = resistance * 1.005 # خروج إذا تجاوز المقاومة بـ 0.5%
+                        msg = (f"🔴 <b>صفقة مضاربة: {symbol} [PUT]</b>\n"
+                               f"🔹 <b>سعر الدخول الحالي:</b> ${price:.2f}\n"
+                               f"🎫 <b>السترايك المقترح:</b> ${strike}\n\n"
+                               f"🎯 <b>الأهداف:</b> ${price * 0.99:.2f} ثم ${support:.2f}\n"
+                               f"⚠️ <b>نقطة الخروج (إلزامي):</b> إذا تجاوز ${stop_loss:.2f}\n\n"
+                               f"💡 <i>ملاحظة: تجاوز السعر لهذه النقطة يعني استمرار الصعود وضياع عقد البوت.</i>")
+
+                    if msg:
+                        # إضافة حالة السيولة في نهاية الرسالة
+                        vol_tag = "✅ سيولة تدعم الحركة" if vol > avg_vol else "⚪ سيولة ضعيفة"
+                        msg += f"\n\n📊 <b>حالة السيولة:</b> {vol_tag}\n🔗 <a href='https://tradingview.com/symbols/{symbol}'>الشارت</a>"
                         send_message(msg)
-            except Exception as e:
-                print(f"Error with {symbol}: {e}")
-            
-            time.sleep(2) # راحة بسيطة بين كل شركة وشركة عشان الحظر
-            
-        time.sleep(300) # فحص شامل كل 5 دقائق
+            except: pass
+            time.sleep(2)
+        time.sleep(300)
 
 if __name__ == "__main__":
     Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
