@@ -4,59 +4,84 @@ import yfinance as yf
 from flask import Flask
 from threading import Thread
 
-# البيانات اللي تأكدنا منها
+# بيانات الربط الخاصة بك
 TOKEN = "8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 server = Flask(__name__)
 
+# قائمة المراقبة (Watchlist)
 WATCHLIST = ['NVDA', 'TSLA', 'AMZN', 'OXY', 'AAPL', 'MSFT', 'QQQ', '^SPX']
 
 @server.route('/')
-def health_check():
-    return "Falcon Radar is Running", 200
+def health_check(): 
+    return "Falcon Master Radar is Online", 200
+
+def calculate_rsi(df):
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def scan_markets():
-    # رسالة ترحيبية عشان نتأكد إن البوت شبك
-    bot.send_message(CHAT_ID, "🚀 تم تحديث الرادار بنظام السحب السريع.. جاري جلب الأسعار")
-    
+    bot.send_message(CHAT_ID, "🦅 **تم تشغيل الرادار بنجاح.. جاري فحص الفرص القوية**")
     while True:
         for ticker in WATCHLIST:
             try:
-                # طريقة "السحب السريع" للبيانات الأساسية عشان نتفادى الحظر
                 stock = yf.Ticker(ticker)
-                
-                # جلب السعر الحالي بطريقة خفيفة جداً
-                current_price = stock.fast_info['last_price']
-                
-                # جلب الـ RSI بطلب منفصل وخفيف
+                # سحب 5 أيام فقط لضمان السرعة وعدم الحظر
                 df = stock.history(period='5d', interval='15m', prepost=True)
                 
-                msg = f"📊 **السهم:** {ticker}\n"
-                msg += f"💰 **السعر الحالي:** ${current_price:.2f}\n"
+                if df.empty or len(df) < 15: continue
+
+                # حساب المؤشرات
+                rsi_series = calculate_rsi(df)
+                current_price = df['Close'].iloc[-1]
+                rsi_val = rsi_series.iloc[-1]
+                low_2d = df['Low'].min() # أدنى سعر في 5 أيام لوقف الخسارة
+
+                # تحديد قوة الصفقة والأهداف بناءً على RSI
+                if rsi_val <= 32:
+                    strength = "🔥 قوية جداً (فرصة دخول)"
+                    target = current_price * 1.025 # هدف 2.5%
+                    strike_offset = 1
+                elif rsi_val <= 42:
+                    strength = "⚡️ متوسطة (للمراقبة)"
+                    target = current_price * 1.015 # هدف 1.5%
+                    strike_offset = 2
+                elif rsi_val >= 68:
+                    strength = "⚠️ تضخم (منطقة خروج)"
+                    target = 0
+                    strike_offset = 0
+                else:
+                    strength = "⚪️ ضعيفة (لا توجد إشارة)"
+                    target = 0
+                    strike_offset = 0
+
+                # تنسيق الرسالة
+                msg = f"📊 **السهم: {ticker}**\n"
+                msg += f"💰 السعر: ${current_price:.2f}\n"
+                msg += f"📈 RSI: {rsi_val:.2f}\n"
+                msg += f"💪 القوة: {strength}\n"
                 
-                if not df.empty and len(df) > 14:
-                    # حساب RSI بسيط وسريع
-                    delta = df['Close'].diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                    rs = gain / loss
-                    rsi = 100 - (100 / (1 + rs))
-                    current_rsi = rsi.iloc[-1]
-                    msg += f"📉 **RSI:** {current_rsi:.2f}\n"
+                if target > 0:
+                    msg += f"-------------------\n"
+                    msg += f"🎯 الهدف (Target): ${target:.2f}\n"
+                    msg += f"🛑 الوقف (Stop): ${low_2d:.2f}\n"
+                    msg += f"🎫 سترايك مقترح: {round(current_price + strike_offset)}"
                 
                 bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
-                time.sleep(5) # ننتظر 5 ثواني بين كل سهم وسهم عشان "نروق" ياهو
-                
+                time.sleep(7) # انتظار 7 ثواني بين الأسهم لتجنب الحظر
             except Exception as e:
                 print(f"Error skipping {ticker}: {e}")
+                continue
         
-        # ريحه 10 دقائق بعد ما يخلص كل اللستة
+        # فحص كل 10 دقائق
         time.sleep(600)
 
 if __name__ == "__main__":
-    try:
-        Thread(target=scan_markets, daemon=True).start()
-        server.run(host='0.0.0.0', port=10000)
-    except Exception as e:
-        print(e)
+    # تشغيل الرادار في خلفية السيرفر
+    Thread(target=scan_markets, daemon=True).start()
+    # تشغيل ويب سيرفر عشان Render ما يطفي البوت
+    server.run(host='0.0.0.0', port=10000)
