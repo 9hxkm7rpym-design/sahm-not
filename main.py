@@ -1,101 +1,137 @@
-import telebot
+import os
 import time
+import requests
 import yfinance as yf
-from flask import Flask
-from threading import Thread
+import pandas as pd
+from datetime import datetime
+import pytz
+import threading
 
-# بيانات الربط الخاصة بك
-TOKEN = "8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo"
-CHAT_ID = "1068286006"
-bot = telebot.TeleBot(TOKEN)
-server = Flask(__name__)
+# --- إعدادات البوت ---
+TOKEN = os.getenv('TELEGRAM_TOKEN')
+CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+RENDER_URL = "https://sahm-not.onrender.com" # ضع رابط موقعك هنا
 
-# قائمة المراقبة (تم إضافة Microsoft و AMD)
-WATCHLIST = ['NVDA', 'TSLA', 'AMZN', 'OXY', 'AAPL', 'MSFT', 'AMD', 'QQQ', '^SPX']
+# قائمة الأسهم المحدثة
+WATCHLIST = ['NVDA', 'META', 'TSLA', 'AAPL', 'MSFT', 'OXY', 'SPY', 'AMD']
 
-@server.route('/')
-def health_check(): return "Falcon Ultimate Stable Online", 200
+# ذاكرة البوت لمنع التكرار وحفظ نتائج اليوم
+last_alerts = {}
+daily_log = []
 
-def calculate_indicators(df):
-    # حساب RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # حساب المتوسط المتحرك SMA 20
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    
-    # حساب متوسط الحجم
-    df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
-    return df
+def send_message(text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={text}&parse_mode=Markdown"
+    try:
+        requests.get(url)
+    except:
+        print("Error sending message")
 
-def scan_markets():
-    bot.send_message(CHAT_ID, "🦅 **رادار النخبة يعمل الآن.. تحليل شامل (RSI + SMA + Volume) جاهز يا سلطان!**")
+def get_signal(ticker):
+    try:
+        data = yf.download(ticker, period='1d', interval='5m', progress=False)
+        if data.empty: return None
+        
+        # حساب المؤشرات
+        close = data['Close'].iloc[-1]
+        sma = data['Close'].rolling(window=10).mean().iloc[-1]
+        
+        # حساب RSI بسيط
+        delta = data['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean().iloc[-1]
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean().iloc[-1]
+        rs = gain / loss if loss != 0 else 0
+        rsi = 100 - (100 / (1 + rs))
+
+        signal = "SIDEWAYS"
+        if close > sma and rsi < 70: signal = "CALL 🟢"
+        elif close < sma and rsi > 30: signal = "PUT 🔴"
+        
+        return {
+            'price': round(float(close), 2),
+            'rsi': round(float(rsi), 1),
+            'sma': round(float(sma), 2),
+            'signal': signal
+        }
+    except:
+        return None
+
+def analyze_market():
+    global daily_log
+    for ticker in WATCHLIST:
+        analysis = get_signal(ticker)
+        if not analysis or analysis['signal'] == "SIDEWAYS": continue
+
+        current_price = analysis['price']
+        
+        # منع التكرار: إذا كان السعر لم يتغير بأكثر من 0.2% لا ترسل
+        if ticker in last_alerts:
+            old_price = last_alerts[ticker]
+            diff = abs(current_price - old_price) / old_price
+            if diff < 0.002: continue 
+
+        last_alerts[ticker] = current_price
+        
+        # اقتراح السترايك (أقرب رقم صحيح)
+        strike = round(current_price)
+        if "CALL" in analysis['signal']:
+            strike += 1
+            emoji = "🚀"
+        else:
+            strike -= 1
+            emoji = "📉"
+
+        msg = (
+            f"🤖 *تنبيه قناص الصحراء* {emoji}\n"
+            f"📊 السهم: {ticker}\n"
+            f"💰 السعر: ${current_price}\n"
+            f"📉 RSI: {analysis['rsi']}\n"
+            f"-------------------\n"
+            f"الاتجاه: {analysis['signal']}\n"
+            f"🎯 السترايك المقترح: {strike}\n"
+            f"🛡️ الوقف: {round(current_price * 0.99, 2) if 'CALL' in analysis['signal'] else round(current_price * 1.01, 2)}"
+        )
+        send_message(msg)
+        daily_log.append({'time': datetime.now(), 'ticker': ticker, 'price': current_price, 'signal': analysis['signal']})
+
+# وظيفة لإرسال تقرير الإغلاق
+def send_daily_report():
+    if not daily_log: return
+    report = "📊 *تقرير حصاد اليوم يا سلطان* 📊\n\n"
+    for item in daily_log[-10:]: # آخر 10 صفقات
+        report += f"✅ {item['ticker']} | {item['signal']} عند ${item['price']}\n"
+    send_message(report)
+
+# وظيفة منع النوم (Ping)
+def keep_alive():
     while True:
-        for ticker in WATCHLIST:
-            try:
-                stock = yf.Ticker(ticker)
-                # سحب بيانات Pre-market لضمان العمل وقت إغلاق السوق
-                df = stock.history(period='5d', interval='15m', prepost=True)
-                if df.empty or len(df) < 20: continue
+        try:
+            requests.get(RENDER_URL)
+            print("Pinging server to stay awake...")
+        except:
+            print("Ping failed")
+        time.sleep(120) # كل دقيقتين
 
-                df = calculate_indicators(df)
-                current_price = df['Close'].iloc[-1]
-                rsi_val = df['RSI'].iloc[-1]
-                sma_val = df['SMA_20'].iloc[-1]
-                current_vol = df['Volume'].iloc[-1]
-                avg_vol = df['Vol_Avg'].iloc[-1]
-                
-                # حساب الدعم والمقاومة
-                support = df['Low'].tail(40).min()
-                resistance = df['High'].tail(40).max()
+def main_loop():
+    tz = pytz.timezone('Asia/Riyadh')
+    report_sent = False
+    
+    while True:
+        now = datetime.now(tz)
+        
+        # هل السوق مفتوح؟ (4:30 م إلى 11:00 م بتوقيت السعودية)
+        if (now.hour == 16 and now.minute >= 30) or (17 <= now.hour < 23):
+            analyze_market()
+            report_sent = False
+        
+        # إرسال التقرير الساعة 11:05 م
+        if now.hour == 23 and now.minute == 5 and not report_sent:
+            send_daily_report()
+            report_sent = True
+            daily_log.clear() # تصفير السجل ليوم جديد
 
-                # تحديد الاتجاه والدرجة
-                is_call = rsi_val <= 50
-                direction = "🟢 كول (CALL)" if is_call else "🔴 بوت (PUT)"
-                
-                # معايير الثقة (فحص الحجم والـ RSI)
-                vol_status = "عالية ✅" if current_vol > avg_vol else "ضعيفة ⚠️"
-                confidence = "عالية جداً 🔥" if (rsi_val <= 35 or rsi_val >= 65) and current_vol > avg_vol else "متوسطة ⚡️"
-
-                # حساب الأهداف الثلاثة
-                if is_call:
-                    t1, t2, t3 = current_price * 1.01, current_price * 1.025, resistance
-                    stop, strike = support, int(current_price) + 1
-                else:
-                    t1, t2, t3 = current_price * 0.99, current_price * 0.975, support
-                    stop, strike = resistance, int(current_price) - 1
-
-                report = (
-                    f"🤖 **رسالة من البوت الآلي** 🤖\n"
-                    f"📊 **إشارة تداول {ticker}**\n"
-                    f"💰 **السعر الحالي: ${current_price:.2f}**\n"
-                    f"📈 **RSI:** {int(rsi_val)} | **SMA:** {int(sma_val)}\n"
-                    f"📊 **السيولة:** {vol_status}\n"
-                    f"-------------------\n"
-                    f"**الاتجاه: {direction}**\n"
-                    f"🟡 **درجة الثقة:** {confidence}\n"
-                    f"🕒 **الصلاحية:** Intraday / Weekly\n\n"
-                    f"⚙️ **خطة التنفيذ:**\n"
-                    f"🔹 **منطقة الدخول:** {int(current_price)}\n"
-                    f"🔹 **مستوى الوقف:** {int(stop)}\n"
-                    f"🎯 **هدف 1:** {int(t1)}\n"
-                    f"🎯 **هدف 2:** {int(t2)}\n"
-                    f"🎯 **هدف 3:** {int(t3)}\n\n"
-                    f"📋 **العقد المقترح:**\n"
-                    f"{direction} | Strike: {strike}"
-                )
-                
-                bot.send_message(CHAT_ID, report, parse_mode="Markdown")
-                time.sleep(12) # تأخير بسيط لتجنب الحظر من التليجرام
-            except Exception as e:
-                print(f"Error scanning {ticker}: {e}")
-                continue
-        time.sleep(600) # فحص كل 10 دقائق
+        time.sleep(60)
 
 if __name__ == "__main__":
-    # تشغيل السيرفر والبوت في خيوط منفصلة لضمان الاستقرار
-    Thread(target=scan_markets, daemon=True).start()
-    server.run(host='0.0.0.0', port=10000)
+    # تشغيل نظام منع النوم في خلفية الكود
+    threading.Thread(target=keep_alive, daemon=True).start()
+    main_loop()
