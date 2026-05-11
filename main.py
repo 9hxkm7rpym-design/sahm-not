@@ -1,73 +1,56 @@
-import yfinance as yf
-import requests
+import telebot
 import time
+import yfinance as yf
 import pandas_ta as ta
-from threading import Thread
 from flask import Flask
+from threading import Thread
+from datetime import datetime
 
+# بيانات الربط
+TOKEN = "8308789681:AAFLJuVqqQ3Jqtgth51in4IZpN1X_1aZYAE"
+CHAT_ID = "634887309"
+bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
+WATCHLIST = ['NVDA', 'TSLA', 'AMZN', 'OXY', 'AAPL', 'MSFT', 'QQQ', '^SPX']
+
 @app.route('/')
-def home(): return "Final-Stable-Bot: Active"
+def home(): return "Falcon Night-Rider Active! 🦅"
 
-# --- الإعدادات ---
-TOKEN = "8308789681:AAFLJuVqqQ3Jqtgth51in4IZpN1X_1aZYAE"
-CHAT_ID = "1068286006"
+def get_signal_strength(rsi):
+    if rsi <= 30 or rsi >= 70: return "🔥 قوية جداً"
+    elif (40 >= rsi > 30) or (60 <= rsi < 70): return "⚡️ متوسطة"
+    else: return "⚪️ ضعيفة"
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    try: requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
-    except: pass
-
-def start_bot():
-    send_message("✅ <b>تم تحديث البوت للنسخة النهائية المستقرة.</b>\nسأبدأ بجلب الأخبار والبحث عن صفقات قوية.")
-    
-    symbols = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'OXY']
-    last_news_time = 0
-
+def analyzer():
     while True:
-        # 1. قسم جلب الأخبار (يشتغل حتى لو السوق مقفل)
-        if time.time() - last_news_time > 3600: # كل ساعة خبر
+        now = datetime.now().strftime("%H:%M")
+        for s in WATCHLIST:
             try:
-                news_data = yf.Ticker("SPY").news[:2]
-                for item in news_data:
-                    send_message(f"🌍 <b>خبر عاجل:</b>\n{item['title']}\n🔗 <a href='{item['link']}'>المصدر</a>")
-                last_news_time = time.time()
-            except: pass
+                # تفعيل التداول الليلي prepost=True
+                data = yf.download(s, period='1d', interval='15m', prepost=True, progress=False)
+                if data.empty: continue
+                data['RSI'] = ta.rsi(data['Close'], length=14)
+                cp = data['Close'].iloc[-1]
+                rsi_val = data['RSI'].iloc[-1]
+                if rsi_val is None or str(rsi_val) == 'nan': continue
 
-        # 2. قسم الصفقات
-        for symbol in symbols:
-            try:
-                df = yf.download(symbol, period='1d', interval='1m', progress=False)
-                if df.empty: continue
-
-                rsi = ta.rsi(df['Close'], length=14).iloc[-1]
-                price = df['Close'].iloc[-1]
+                strength = get_signal_strength(rsi_val)
+                name = "SPX (سباكس)" if s == '^SPX' else s
                 
-                # تقييم قوة الصفقة
-                signal = ""
-                quality = ""
-                if rsi < 35: 
-                    signal = "CALL 🟢"
-                    quality = "🔥 قوة الصفقة: عالية جداً" if rsi < 30 else "🟡 قوة الصفقة: متوسطة"
-                elif rsi > 65:
-                    signal = "PUT 🔴"
-                    quality = "🔥 قوة الصفقة: عالية جداً" if rsi > 70 else "🟡 قوة الصفقة: متوسطة"
-
-                if signal:
-                    msg = (f"🎯 <b>صيدة جديدة: {symbol}</b>\n"
-                           f"--------------------------\n"
-                           f"📍 النوع: {signal}\n"
-                           f"📊 {quality}\n"
-                           f"💰 السعر: ${price:.2f}\n"
-                           f"📈 RSI: {int(rsi)}\n"
-                           f"🔗 <a href='https://www.tradingview.com/chart/?symbol={symbol}'>الشارت</a>")
-                    send_message(msg)
-                    time.sleep(5)
+                msg = (f"🦅 **رادار الفالكون - تداول ليلي**\n\n"
+                       f"📊 السهم: {name}\n"
+                       f"💰 السعر الحالي: ${float(cp):.2f}\n"
+                       f"📉 RSI: {float(rsi_val):.2f}\n"
+                       f"💪 القوة: {strength}\n"
+                       f"⏰ توقيت الرصد: {now}")
+                bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
+                time.sleep(3)
             except: pass
-        
-        time.sleep(30)
+        time.sleep(900)
 
 if __name__ == "__main__":
-    Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
-    start_bot()
+    # هذي هي الرسالة اللي لازم تطلع لك الحين لو نسخت الكود صح
+    bot.send_message(CHAT_ID, "🌙 **تم تفعيل رادار التداول الليلي بنجاح يا سلطان.**\nجاري جلب الأسعار اللحظية الآن...")
+    Thread(target=analyzer, daemon=True).start()
+    app.run(host='0.0.0.0', port=10000)
