@@ -4,60 +4,56 @@ import yfinance as yf
 import pandas_ta as ta
 from flask import Flask
 from threading import Thread
-from datetime import datetime
 
+# البيانات المصححة
 TOKEN = "8308789681:AAFLJuVqqQ3Jqtgth51in4IZpN1X_1aZYAE"
-CHAT_ID = "634887309"
+CHAT_ID = "1068286006"  # تم تعديل الرقم هنا يا سلطان
 bot = telebot.TeleBot(TOKEN)
-app = Flask(__name__)
+server = Flask(__name__)
 
 WATCHLIST = ['NVDA', 'TSLA', 'AMZN', 'OXY', 'AAPL', 'MSFT', 'QQQ', '^SPX']
 
-@app.route('/')
-def home():
-    return "Falcon Night-Rider Active! 🦅"
+@server.route('/')
+def health_check():
+    return "Falcon Radar is Online! 🦅", 200
 
-def get_signal_strength(rsi):
-    if rsi <= 30 or rsi >= 70:
-        return "🔥 قوية جداً"
-    elif (40 >= rsi > 30) or (60 <= rsi < 70):
-        return "⚡️ متوسطة"
-    else:
-        return "⚪️ ضعيفة"
+def get_strength(rsi):
+    if rsi <= 30 or rsi >= 70: return "🔥 قوية جداً"
+    if (rsi <= 40) or (rsi >= 60): return "⚡️ متوسطة"
+    return "⚪️ ضعيفة"
 
-def analyzer():
+def scan_markets():
     while True:
-        now = datetime.now().strftime("%H:%M")
-        for s in WATCHLIST:
+        for ticker in WATCHLIST:
             try:
-                data = yf.download(s, period='1d', interval='15m', prepost=True, progress=False)
-                if data.empty:
-                    continue
-                data['RSI'] = ta.rsi(data['Close'], length=14)
-                cp = data['Close'].iloc[-1]
-                rsi_val = data['RSI'].iloc[-1]
-                if rsi_val is None or str(rsi_val) == 'nan':
-                    continue
+                df = yf.download(ticker, period='2d', interval='15m', prepost=True, progress=False)
+                if df.empty or len(df) < 14: continue
+                
+                df['RSI'] = ta.rsi(df['Close'], length=14)
+                current_price = df['Close'].iloc[-1]
+                rsi_value = df['RSI'].iloc[-1]
+                
+                if str(rsi_value) == 'nan': continue
 
-                strength = get_signal_strength(rsi_val)
-                name = "SPX (سباكس)" if s == '^SPX' else s
+                strength = get_strength(rsi_value)
+                symbol_name = "SPX (سباكس)" if ticker == '^SPX' else ticker
                 
                 msg = (f"🦅 **رادار الفالكون - تداول ليلي**\n\n"
-                       f"📊 السهم: {name}\n"
-                       f"💰 السعر الحالي: ${float(cp):.2f}\n"
-                       f"📉 RSI: {float(rsi_val):.2f}\n"
-                       f"💪 القوة: {strength}\n"
-                       f"⏰ توقيت الرصد: {now}")
+                       f"📊 السهم: {symbol_name}\n"
+                       f"💰 السعر: ${float(current_price):.2f}\n"
+                       f"📉 RSI: {float(rsi_value):.2f}\n"
+                       f"💪 القوة: {strength}")
+                
                 bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
-                time.sleep(3)
+                time.sleep(3) 
             except Exception as e:
-                print(f"Error for {s}: {e}")
+                print(f"Error: {e}")
         time.sleep(900)
 
 if __name__ == "__main__":
     try:
-        bot.send_message(CHAT_ID, "🌙 **تم تفعيل رادار التداول الليلي بنجاح يا سلطان.**\nجاري جلب الأسعار اللحظية الآن...")
-    except:
-        pass
-    Thread(target=analyzer, daemon=True).start()
-    app.run(host='0.0.0.0', port=10000)
+        bot.send_message(CHAT_ID, "🌙 **تم تفعيل رادار التداول الليلي بنجاح يا سلطان.**\nجاري فحص السوق الآن...")
+        Thread(target=scan_markets, daemon=True).start()
+        server.run(host='0.0.0.0', port=10000)
+    except Exception as e:
+        print(f"Error: {e}")
