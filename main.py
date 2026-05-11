@@ -5,9 +5,9 @@ import pandas_ta as ta
 from flask import Flask
 from threading import Thread
 
-# البيانات المصححة
-TOKEN = "8308789681:AAFLJuVqqQ3Jqtgth51in4IZpN1X_1aZYAE"
-CHAT_ID = "1068286006"  # تم تعديل الرقم هنا يا سلطان
+# التوكين الجديد من صورتك الأخيرة والـ ID حقك
+TOKEN = "8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo"
+CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 server = Flask(__name__)
 
@@ -52,6 +52,7 @@ def scan_markets():
 
 if __name__ == "__main__":
     try:
+        # تأكد من إرسال رسالة التفعيل بالتوكين الجديد
         bot.send_message(CHAT_ID, "🌙 **تم تفعيل رادار التداول الليلي بنجاح يا سلطان.**\nجاري فحص السوق الآن...")
         Thread(target=scan_markets, daemon=True).start()
         server.run(host='0.0.0.0', port=10000)
