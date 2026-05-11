@@ -10,12 +10,11 @@ CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 server = Flask(__name__)
 
-# قائمة المراقبة (Watchlist)
-WATCHLIST = ['NVDA', 'TSLA', 'AMZN', 'OXY', 'AAPL', 'MSFT', 'QQQ', '^SPX']
+# القائمة المحدثة (AMD, MSFT, NVDA, TSLA, AMZN, OXY, AAPL, QQQ, SPX)
+WATCHLIST = ['NVDA', 'TSLA', 'AMZN', 'OXY', 'AAPL', 'MSFT', 'AMD', 'QQQ', '^SPX']
 
 @server.route('/')
-def health_check(): 
-    return "Falcon Master Radar is Online", 200
+def health_check(): return "Falcon Expert Pro Online", 200
 
 def calculate_rsi(df):
     delta = df['Close'].diff()
@@ -25,63 +24,73 @@ def calculate_rsi(df):
     return 100 - (100 / (1 + rs))
 
 def scan_markets():
-    bot.send_message(CHAT_ID, "🦅 **تم تشغيل الرادار بنجاح.. جاري فحص الفرص القوية**")
+    bot.send_message(CHAT_ID, "🦅 **تم تحديث المحلل الذكي: الآن يدعم تحديد (كول/بوت) وأرقام صحيحة**")
     while True:
         for ticker in WATCHLIST:
             try:
                 stock = yf.Ticker(ticker)
-                # سحب 5 أيام فقط لضمان السرعة وعدم الحظر
                 df = stock.history(period='5d', interval='15m', prepost=True)
-                
                 if df.empty or len(df) < 15: continue
 
-                # حساب المؤشرات
                 rsi_series = calculate_rsi(df)
                 current_price = df['Close'].iloc[-1]
                 rsi_val = rsi_series.iloc[-1]
-                low_2d = df['Low'].min() # أدنى سعر في 5 أيام لوقف الخسارة
+                
+                # حساب الدعم والمقاومة اللحظية
+                support = df['Low'].tail(40).min()
+                resistance = df['High'].tail(40).max()
 
-                # تحديد قوة الصفقة والأهداف بناءً على RSI
+                # تحليل نوع العقد والقوة
+                contract_type = "غير محدد"
+                strength = "⚪️ ضعيفة (انتظر إشارة أفضل)"
+                target = 0
+                stop = 0
+                strike = 0
+
                 if rsi_val <= 32:
-                    strength = "🔥 قوية جداً (فرصة دخول)"
-                    target = current_price * 1.025 # هدف 2.5%
-                    strike_offset = 1
-                elif rsi_val <= 42:
-                    strength = "⚡️ متوسطة (للمراقبة)"
-                    target = current_price * 1.015 # هدف 1.5%
-                    strike_offset = 2
+                    strength = "🔥 قوية جداً (فرصة انفجار للأعلى)"
+                    contract_type = "🟢 كول (CALL)"
+                    target = resistance
+                    stop = support
+                    strike = int(current_price) + 1
                 elif rsi_val >= 68:
-                    strength = "⚠️ تضخم (منطقة خروج)"
-                    target = 0
-                    strike_offset = 0
-                else:
-                    strength = "⚪️ ضعيفة (لا توجد إشارة)"
-                    target = 0
-                    strike_offset = 0
+                    strength = "⚠️ تضخم عالي (توقع تصحيح للأسفل)"
+                    contract_type = "🔴 بوت (PUT)"
+                    target = support
+                    stop = resistance
+                    strike = int(current_price) - 1
+                elif 32 < rsi_val <= 42:
+                    strength = "⚡️ متوسطة (تجميع إيجابي)"
+                    contract_type = "🟢 كول (CALL)"
+                    target = current_price * 1.02
+                    stop = support
+                    strike = int(current_price) + 2
+                elif 58 <= rsi_val < 68:
+                    strength = "📉 متوسطة (تراجع تدريجي)"
+                    contract_type = "🔴 بوت (PUT)"
+                    target = current_price * 0.98
+                    stop = resistance
+                    strike = int(current_price) - 2
 
-                # تنسيق الرسالة
-                msg = f"📊 **السهم: {ticker}**\n"
-                msg += f"💰 السعر: ${current_price:.2f}\n"
-                msg += f"📈 RSI: {rsi_val:.2f}\n"
-                msg += f"💪 القوة: {strength}\n"
+                # بناء رسالة التحليل
+                msg = f"📊 **تحليل السهم: {ticker}**\n"
+                msg += f"💰 السعر: ${current_price:.2f} | RSI: {rsi_val:.2f}\n"
+                msg += f"💪 الحالة: {strength}\n"
+                msg += f"-------------------\n"
                 
                 if target > 0:
-                    msg += f"-------------------\n"
-                    msg += f"🎯 الهدف (Target): ${target:.2f}\n"
-                    msg += f"🛑 الوقف (Stop): ${low_2d:.2f}\n"
-                    msg += f"🎫 سترايك مقترح: {round(current_price + strike_offset)}"
-                
+                    msg += f"🎫 نوع العقد: **{contract_type}**\n"
+                    msg += f"💎 السترايك: {int(strike)}\n"
+                    msg += f"🎯 الهدف: ${int(target)}\n"
+                    msg += f"🛑 الوقف: ${int(stop)}"
+                else:
+                    msg += f"ℹ️ نصيحة: السهم في مسار عرضي، لا ينصح بالدخول الآن."
+
                 bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
-                time.sleep(7) # انتظار 7 ثواني بين الأسهم لتجنب الحظر
-            except Exception as e:
-                print(f"Error skipping {ticker}: {e}")
-                continue
-        
-        # فحص كل 10 دقائق
+                time.sleep(8) 
+            except: continue
         time.sleep(600)
 
 if __name__ == "__main__":
-    # تشغيل الرادار في خلفية السيرفر
     Thread(target=scan_markets, daemon=True).start()
-    # تشغيل ويب سيرفر عشان Render ما يطفي البوت
     server.run(host='0.0.0.0', port=10000)
