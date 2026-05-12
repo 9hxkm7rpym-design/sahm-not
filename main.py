@@ -3,18 +3,7 @@ import requests
 import pandas as pd
 import pandas_ta as ta
 import time
-from flask import Flask
-from threading import Thread
 import os
-
-# تشغيل سيرفر ويب صغير
-app = Flask('')
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_web():
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
 # بياناتك الثابتة
 TOKEN = '8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo'
@@ -42,24 +31,21 @@ def check_and_send():
         p, r, s, l = get_data(t)
         if p and r:
             trend = "🟢 صاعد" if p > s else "🔴 هابط"
-            if (r < 32 and p > (s * 0.98)) or (r > 68):
-                sig = "كول (CALL)" if r < 32 else "بوت (PUT)"
-                emo = "🟢" if r < 32 else "🔴"
-                stk = round(p) + 1 if r < 32 else round(p) - 1
+            if (r < 30 and p > (s * 0.98)) or (r > 70):
+                sig = "كول (CALL)" if r < 30 else "بوت (PUT)"
+                emo = "🟢" if r < 30 else "🔴"
+                stk = round(p) + 1 if r < 30 else round(p) - 1
                 msg = (f"🤖 **رسالة من البوت الآلي** 🤖\n"
                        f"📊 إشارة تداول {t}\n"
                        f"💰 السعر: ${p} | RSI: {r}\n"
                        f"📊 السيولة: {l}\n"
                        f"-------------------\n"
                        f"الاتجاه: {trend}\n"
-                       f"{emo} النوع: {sig} | Strike: {stk}\n"
-                       f"🎯 الأهداف: +1% | +3%\n"
-                       f"🛑 الوقف: -1%")
+                       f"{emo} النوع: {sig} | Strike: {stk}")
                 bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
 
 if __name__ == "__main__":
-    Thread(target=run_web).start()
-    bot.send_message(CHAT_ID, "✅ تم التحديث بنجاح يا سلطان.. الرادار شغال.")
+    bot.send_message(CHAT_ID, "🚀 تم تشغيل الرادار بنجاح يا سلطان.. جاري فحص الشركات.")
     while True:
         check_and_send()
         time.sleep(300)
