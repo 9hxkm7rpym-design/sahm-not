@@ -1,86 +1,86 @@
-import os
-import time
+import telebot
 import requests
-import yfinance as yf
 import pandas as pd
-from datetime import datetime
-import pytz
-import threading
-from flask import Flask # رجعناه بس عشان نرضي Render
+import pandas_ta as ta
+import time
+from flask import Flask
+from threading import Thread
 
-# --- إعدادات البوت ---
-TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-RENDER_URL = "https://sahm-not.onrender.com" 
-
-app = Flask(__name__)
-
+# تشغيل سيرفر صغير عشان Render ما يطفي البوت
+app = Flask('')
 @app.route('/')
 def home():
-    return "Bot is Running!" # هذي الرسالة اللي تطلع لـ Render عشان ما يطفي
+    return "البوت شغال يا سلطان.. صيد موفق! 🦅"
 
-# قائمة الأسهم
-WATCHLIST = ['NVDA', 'META', 'TSLA', 'AAPL', 'MSFT', 'OXY', 'SPY', 'AMD']
-last_alerts = {}
-daily_log = []
+def run_web():
+    app.run(host='0.0.0.0', port=8080)
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={text}&parse_mode=Markdown"
-    try: requests.get(url)
-    except: print("Error sending message")
+TOKEN = '8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo'
+CHAT_ID = '1068286006'
+bot = telebot.TeleBot(TOKEN)
 
-def get_signal(ticker):
+# قائمة الشركات الشاملة (تكنولوجيا، طاقة، صحة)
+WATCHLIST = ['AAPL', 'SPY', 'MSFT', 'AMZN', 'NVDA', 'UNH', 'LLY', 'OXY']
+
+def get_market_data(ticker):
     try:
-        data = yf.download(ticker, period='1d', interval='5m', progress=False)
-        if data.empty: return None
-        close = data['Close'].iloc[-1]
-        sma = data['Close'].rolling(window=10).mean().iloc[-1]
-        delta = data['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean().iloc[-1]
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean().iloc[-1]
-        rs = gain / loss if loss != 0 else 0
-        rsi = 100 - (100 / (1 + rs))
-        signal = "SIDEWAYS"
-        if close > sma and rsi < 70: signal = "CALL 🟢"
-        elif close < sma and rsi > 30: signal = "PUT 🔴"
-        return {'price': round(float(close), 2), 'rsi': round(float(rsi), 1), 'signal': signal}
-    except: return None
-
-def analyze_market():
-    global daily_log
-    while True:
-        tz = pytz.timezone('Asia/Riyadh')
-        now = datetime.now(tz)
-        if (now.hour == 16 and now.minute >= 30) or (17 <= now.hour < 23):
-            for ticker in WATCHLIST:
-                analysis = get_signal(ticker)
-                if not analysis or analysis['signal'] == "SIDEWAYS": continue
-                current_price = analysis['price']
-                if ticker in last_alerts:
-                    if abs(current_price - last_alerts[ticker]) / last_alerts[ticker] < 0.002: continue 
-                last_alerts[ticker] = current_price
-                strike = round(current_price) + (1 if "CALL" in analysis['signal'] else -1)
-                msg = f"🤖 *قناص الصحراء V2* 🦅\n📊 {ticker} | ${current_price}\n📈 RSI: {analysis['rsi']}\n🎯 سترايك: {strike}\nالاتجاه: {analysis['signal']}"
-                send_message(msg)
-                daily_log.append({'time': now, 'ticker': ticker, 'price': current_price, 'signal': analysis['signal']})
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=5d"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers).json()
+        result = response['chart']['result'][0]
+        close_prices = pd.Series(result['indicators']['quote'][0]['close'])
+        volumes = pd.Series(result['indicators']['quote'][0]['volume'])
         
-        if now.hour == 23 and now.minute == 5:
-            if daily_log:
-                report = "📊 *حصاد اليوم يا سلطان* 📊\n" + "\n".join([f"✅ {i['ticker']} | {i['signal']}" for i in daily_log[-10:]])
-                send_message(report)
-                daily_log.clear()
-        time.sleep(60)
+        price = close_prices.iloc[-1]
+        rsi = ta.rsi(close_prices, length=14).iloc[-1]
+        sma = ta.sma(close_prices, length=50).iloc[-1]
+        
+        avg_vol = volumes.tail(10).mean()
+        current_vol = volumes.iloc[-1]
+        liquidity = "عالية 🔥" if current_vol > avg_vol else "ضعيفة ⚠️"
+        
+        return round(price, 2), round(rsi, 2), round(sma, 2), liquidity
+    except:
+        return None, None, None, None
 
-def keep_alive():
-    while True:
-        try: requests.get(RENDER_URL)
-        except: pass
-        time.sleep(120)
+def send_signal(ticker, price, rsi, sma, liquidity):
+    trend = "🟢 صاعد" if price > sma else "🔴 هابط"
+    if rsi < 32 and price > (sma * 0.97): # إشارة كول
+        m_emoji, s_type, c_emoji = "📈", "كول (CALL)", "🟢"
+        strike = round(price) + 1
+    elif rsi > 68: # إشارة بوت
+        m_emoji, s_type, c_emoji = "📉", "بوت (PUT)", "🔴"
+        strike = round(price) - 1
+    else: return
+
+    msg = (f"🤖 **رسالة من البوت الآلي** 🤖\n"
+           f"📊 إشارة تداول {ticker}\n"
+           f"💰 السعر الحالي: ${price}\n"
+           f"📈 RSI: {rsi} | SMA: {sma}\n"
+           f"📊 السيولة: {liquidity}\n"
+           f"-------------------\n"
+           f"الاتجاه: {trend}\n"
+           f"{c_emoji} النوع: {s_type}\n"
+           f"🟡 درجة الثقة: متوسطة ⚡️\n\n"
+           f"⚙️ **خطة التنفيذ:**\n"
+           f"🔹 منطقة الدخول: {price}\n"
+           f"🎯 هدف 1: {round(price * 1.01, 2)}\n"
+           f"🎯 هدف 2: {round(price * 1.03, 2)}\n"
+           f"🛑 مستوى الوقف: {round(price * 0.99, 2)}\n\n"
+           f"📋 **العقد المقترح:**\n"
+           f"{m_emoji} {s_type} | Strike: {strike}")
+    bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
 
 if __name__ == "__main__":
-    # تشغيل التحليل ومنع النوم في خيوط منفصلة
-    threading.Thread(target=analyze_market, daemon=True).start()
-    threading.Thread(target=keep_alive, daemon=True).start()
-    # تشغيل Flask على البورت اللي يطلبه Render
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    # تشغيل السيرفر في خلفية الكود
+    t = Thread(target=run_web)
+    t.start()
+    
+    bot.send_message(CHAT_ID, "✅ تم تشغيل رادار سلطان بنجاح.. البوت لن ينام بعد اليوم!")
+    
+    while True:
+        for ticker in WATCHLIST:
+            p, r, s, l = get_market_data(ticker)
+            if p:
+                send_signal(ticker, p, r, s, l)
+        time.sleep(300) # فحص كل 5 دقائق
