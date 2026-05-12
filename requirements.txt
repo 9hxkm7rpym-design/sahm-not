@@ -1,5 +1,5 @@
+pyTelegramBotAPI
 requests
-yfinance
 pandas
-pytz
+pandas_ta
 flask
