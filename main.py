@@ -3,29 +3,25 @@ import requests
 import time
 import pandas as pd
 import pandas_ta as ta
-from scipy.signal import find_peaks
 from flask import Flask
 from threading import Thread
 import os
 
-# --- إعدادات سلطان (بوت المحلل المحترف) ---
+# --- إعدادات سلطان الخاصة ---
 TOKEN = '8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo'
 CHAT_ID = '1068286006'
 bot = telebot.TeleBot(TOKEN)
 
-# --- فاتح البورت لضمان استقرار البوت على Render ---
 app = Flask('')
 @app.route('/')
-def home(): return "رادار سلطان شغال ويصيد كل الفرص! 🦅"
+def home(): return "رادار سلطان شغال بنفس التنسيق المفضل!"
 def run():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
 WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'AMD', 'RBLX', 'SPY', 'QQQ', 'OXY', 'CVX']
-active_trades = {}
 
 def get_market_opportunities():
-    print("🔄 الرادار يفحص كل الفرص المتاحة الآن...")
     for t in WATCHLIST:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?interval=15m&range=5d"
@@ -34,70 +30,63 @@ def get_market_opportunities():
             df = pd.DataFrame(data).ffill()
             p = round(df['close'].iloc[-1], 2)
 
-            # --- متابعة الأهداف المحققة ---
-            if t in active_trades:
-                trade = active_trades[t]
-                if (trade['type'] == 'CALL' and p >= trade['t1']) or (trade['type'] == 'PUT' and p <= trade['t1']):
-                    bot.send_message(CHAT_ID, f"🎯 **مبروك يا سلطان! تحقق الهدف**\n✅ سهم `{t}` وصل للمحطة الأولى: `${trade['t1']}` 💰")
-                    del active_trades[t]
-                    continue
-
-            # --- التحليل الفني الشامل ---
+            # --- الحسابات الفنية ---
             df['rsi'] = ta.rsi(df['close'], length=14)
             df['ema9'] = ta.ema(df['close'], length=9)
             df['sma20'] = ta.sma(df['close'], length=20)
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
             
             vol_ratio = round(df['volume'].iloc[-1] / df['volume'].tail(20).mean(), 1)
-            rsi_now = df['rsi'].iloc[-1]
-            ema_now = df['ema9'].iloc[-1]
-            sma_now = df['sma20'].iloc[-1]
+            rsi_val = round(df['rsi'].iloc[-1])
+            sma_val = round(df['sma20'].iloc[-1], 2)
+            ema_val = df['ema9'].iloc[-1]
 
-            # --- كاشف الفرص (حساس لجميع الحركات) ---
-            status = None
-            if rsi_now < 45: status = 'CALL' 
-            elif rsi_now > 55: status = 'PUT'
+            # نظام الصيد (يرسل كل الفرص)
+            status = "CALL 🟢" if rsi_val < 50 else "PUT 🔴"
+            
+            # حساب الثقة والتحليل
+            score = 30
+            analysis_notes = []
+            if vol_ratio > 1.3: 
+                score += 30
+                analysis_notes.append(f"🔥 سيولة عالية ({vol_ratio}x)")
+            if (status == "CALL 🟢" and p > ema_val) or (status == "PUT 🔴" and p < ema_val):
+                score += 20
+                analysis_notes.append("📈 تأكيد الاتجاه")
+            if rsi_val < 30 or rsi_val > 70:
+                score += 20
+                analysis_notes.append("🎯 تشبع حاد (انعكاس)")
 
-            if status:
-                # --- نظام حساب "درجة الثقة" (السر في النجاح) ---
-                score = 30 # أساسي
-                if vol_ratio > 1.5: score += 25 # قوة سيولة
-                if (status == 'CALL' and p > ema_now) or (status == 'PUT' and p < ema_now): score += 20 # اتجاه صحيح
-                if (status == 'CALL' and rsi_now < 30) or (status == 'PUT' and rsi_now > 70): score += 25 # منطقة ارتداد حقيقية
-                
-                # تصنيف القوة بالرموز
-                if score >= 80: power = "🟢 ذهبية (ثقة ملكية 👑)"
-                elif score >= 55: power = "🟡 متوسطة (مضاربة جيدة ✅)"
-                else: power = "⚪ ضعيفة (مخاطرة عالية ⚠️)"
+            atr_val = df['atr'].iloc[-1]
+            stop = round(p - (atr_val * 2), 2) if "CALL" in status else round(p + (atr_val * 2), 2)
+            h1 = round(p + (atr_val * 2.5), 2) if "CALL" in status else round(p - (atr_val * 2.5), 2)
+            h2 = round(p + (atr_val * 4), 2) if "CALL" in status else round(p - (atr_val * 4), 2)
 
-                # تحديد المحطات (الهدف والوقف بناءً على التذبذب)
-                atr_val = df['atr'].iloc[-1]
-                stop = round(p - (atr_val * 2), 2) if status == 'CALL' else round(p + (atr_val * 2), 2)
-                target1 = round(p + (atr_val * 3), 2) if status == 'CALL' else round(p - (atr_val * 3), 2)
-
-                active_trades[t] = {'type': status, 't1': target1}
-
-                # --- رسالة المحلل الشاملة ---
-                msg = (f"🚀 **فرصة مكتشفة: {t}**\n\n"
-                       f"📊 **درجة الثقة: {score}%**\n"
-                       f"💪 القوة: {power}\n"
-                       f"------------------------------\n"
-                       f"📈 النوع: {'🟢 CALL' if status == 'CALL' else '🔴 PUT'}\n"
-                       f"💰 السعر: `${p}` | السيولة: {vol_ratio}x\n"
-                       f"------------------------------\n"
-                       f"📍 **خطة العمل:**\n"
-                       f"🎯 الهدف: `{target1}`\n"
-                       f"🛑 الوقف: `{stop}`\n\n"
-                       f"📝 **ملاحظة:** تم إرسال الفرصة بناءً على طلبك لرؤية كل الفرص.")
-                
-                bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
-                time.sleep(2)
-
-        except Exception as e: print(f"Error in {t}: {e}")
+            # --- التنسيق المفضل لـ سلطان ---
+            msg = (f"🤖 **رسالة من البوت الآلي**\n"
+                   f"📊 إشارة تداول: {t}\n"
+                   f"💰 السعر الحالي: `${p}`\n"
+                   f"📈 RSI: {rsi_val} | SMA: {sma_val}\n"
+                   f"----------------------------------\n"
+                   f"📊 **درجة الثقة: {score}%**\n"
+                   f"🧐 **لماذا؟** {', '.join(analysis_notes) if analysis_notes else 'حركة مضاربية'}\n"
+                   f"----------------------------------\n"
+                   f"الاتجاه: {status}\n"
+                   f"الصلاحية: 🕒 Intraday\n\n"
+                   f"⚙️ **خطة التنفيذ (محطات الشارت):**\n"
+                   f"🔷 منطقة الدخول: `{p}`\n"
+                   f"🔷 مستوى الوقف: `{stop}`\n"
+                   f"🎯 هدف 1: `{h1}`\n"
+                   f"🎯 هدف 2: `{h2}`\n\n"
+                   f"📋 **العقد المقترح:**\n"
+                   f"Strike: {round(h1)} | {'🟢' if 'CALL' in status else '🔴'}")
+            
+            bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+            time.sleep(2)
+        except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
     Thread(target=run).start()
-    print("✅ بوت سلطان (المحلل المحترف) يعمل الآن...")
     while True:
         get_market_opportunities()
         time.sleep(600)
