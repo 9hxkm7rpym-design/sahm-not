@@ -1,3 +1,6 @@
 pyTelegramBotAPI
+pandas
 pandas_ta
 scipy
+requests
+
