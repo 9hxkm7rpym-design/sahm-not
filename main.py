@@ -14,7 +14,7 @@ bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "رادار سلطان شغال بنفس التنسيق المفضل!"
+def home(): return "رادار سلطان: نسخة الفلتر الذكي شغال!"
 def run():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
@@ -30,7 +30,7 @@ def get_market_opportunities():
             df = pd.DataFrame(data).ffill()
             p = round(df['close'].iloc[-1], 2)
 
-            # --- الحسابات الفنية ---
+            # --- التحليل الفني المعمق ---
             df['rsi'] = ta.rsi(df['close'], length=14)
             df['ema9'] = ta.ema(df['close'], length=9)
             df['sma20'] = ta.sma(df['close'], length=20)
@@ -38,51 +38,46 @@ def get_market_opportunities():
             
             vol_ratio = round(df['volume'].iloc[-1] / df['volume'].tail(20).mean(), 1)
             rsi_val = round(df['rsi'].iloc[-1])
-            sma_val = round(df['sma20'].iloc[-1], 2)
             ema_val = df['ema9'].iloc[-1]
 
-            # نظام الصيد (يرسل كل الفرص)
-            status = "CALL 🟢" if rsi_val < 50 else "PUT 🔴"
-            
-            # حساب الثقة والتحليل
-            score = 30
-            analysis_notes = []
-            if vol_ratio > 1.3: 
-                score += 30
-                analysis_notes.append(f"🔥 سيولة عالية ({vol_ratio}x)")
-            if (status == "CALL 🟢" and p > ema_val) or (status == "PUT 🔴" and p < ema_val):
-                score += 20
-                analysis_notes.append("📈 تأكيد الاتجاه")
-            if rsi_val < 30 or rsi_val > 70:
-                score += 20
-                analysis_notes.append("🎯 تشبع حاد (انعكاس)")
+            # نظام الصيد مع فلتر اتجاه
+            status = None
+            if rsi_val < 45 and p > ema_val: status = "CALL 🟢" # دخول فقط إذا السعر فوق المتوسط
+            elif rsi_val > 55 and p < ema_val: status = "PUT 🔴" # دخول فقط إذا السعر تحت المتوسط
 
-            atr_val = df['atr'].iloc[-1]
-            stop = round(p - (atr_val * 2), 2) if "CALL" in status else round(p + (atr_val * 2), 2)
-            h1 = round(p + (atr_val * 2.5), 2) if "CALL" in status else round(p - (atr_val * 2.5), 2)
-            h2 = round(p + (atr_val * 4), 2) if "CALL" in status else round(p - (atr_val * 4), 2)
+            if status:
+                # حساب الثقة بناءً على "تلاقي الأدلة"
+                score = 20 
+                reasons = []
+                if vol_ratio > 1.5: 
+                    score += 40
+                    reasons.append(f"🔥 سيولة انفجارية ({vol_ratio}x)")
+                if rsi_val < 30 or rsi_val > 70: 
+                    score += 40
+                    reasons.append("🎯 تشبع حاد (فرصة ذهبية)")
+                
+                power = "👑 ثقة ملكية" if score >= 80 else "✅ جيدة" if score >= 50 else "⚠️ مخاطرة"
 
-            # --- التنسيق المفضل لـ سلطان ---
-            msg = (f"🤖 **رسالة من البوت الآلي**\n"
-                   f"📊 إشارة تداول: {t}\n"
-                   f"💰 السعر الحالي: `${p}`\n"
-                   f"📈 RSI: {rsi_val} | SMA: {sma_val}\n"
-                   f"----------------------------------\n"
-                   f"📊 **درجة الثقة: {score}%**\n"
-                   f"🧐 **لماذا؟** {', '.join(analysis_notes) if analysis_notes else 'حركة مضاربية'}\n"
-                   f"----------------------------------\n"
-                   f"الاتجاه: {status}\n"
-                   f"الصلاحية: 🕒 Intraday\n\n"
-                   f"⚙️ **خطة التنفيذ (محطات الشارت):**\n"
-                   f"🔷 منطقة الدخول: `{p}`\n"
-                   f"🔷 مستوى الوقف: `{stop}`\n"
-                   f"🎯 هدف 1: `{h1}`\n"
-                   f"🎯 هدف 2: `{h2}`\n\n"
-                   f"📋 **العقد المقترح:**\n"
-                   f"Strike: {round(h1)} | {'🟢' if 'CALL' in status else '🔴'}")
-            
-            bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
-            time.sleep(2)
+                atr_val = df['atr'].iloc[-1]
+                stop = round(p - (atr_val * 1.5), 2) if "CALL" in status else round(p + (atr_val * 1.5), 2)
+                h1 = round(p + (atr_val * 2), 2) if "CALL" in status else round(p - (atr_val * 2), 2)
+
+                msg = (f"🤖 **تحديث من البوت الآلي**\n"
+                       f"📊 إشارة تداول: {t}\n"
+                       f"💰 السعر: `${p}` | الثقة: {score}%\n"
+                       f"----------------------------------\n"
+                       f"💪 القوة: {power}\n"
+                       f"🧐 **السبب:** {', '.join(reasons) if reasons else 'تذبذب فني'}\n"
+                       f"----------------------------------\n"
+                       f"الاتجاه: {status}\n"
+                       f"⚙️ **خطة العمل:**\n"
+                       f"🔷 دخول: `{p}`\n"
+                       f"🛑 وقف: `{stop}`\n"
+                       f"🎯 هدف: `{h1}`\n\n"
+                       f"💡 *نصيحة: لا تدخل أي صفقة ثقتها أقل من 60% اليوم.*")
+                
+                bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+                time.sleep(2)
         except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
