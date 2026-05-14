@@ -6,23 +6,24 @@ import pandas_ta as ta
 from scipy.signal import find_peaks
 from flask import Flask
 from threading import Thread
+import os
 
 # --- إعدادات سلطان الخاصة ---
 TOKEN = '8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo'
 CHAT_ID = '1068286006'
 bot = telebot.TeleBot(TOKEN)
 
-# --- كود إرضاء سيرفر Render (عشان ما يعلق) ---
+# --- كود وهمي لفتح البورت وإرضاء Render ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Alive!"
-def run(): app.run(host='0.0.0.0', port=10000)
+def home(): return "البوت شغال يا سلطان!"
+def run(): app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'AMD', 'RBLX', 'SPY', 'QQQ', 'OXY', 'CVX']
 active_trades = {}
 
 def get_expert_analysis():
-    print("🔄 جاري تحليل السوق الآن يا سلطان...")
+    print("🔄 جاري فحص الفرص الآن...")
     for t in WATCHLIST:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?interval=15m&range=5d"
@@ -39,7 +40,7 @@ def get_expert_analysis():
                     del active_trades[t]
                     continue
 
-            # التحليل الفني المتقدم
+            # مؤشرات التحليل
             df['rsi'] = ta.rsi(df['close'], length=14)
             df['ema9'] = ta.ema(df['close'], length=9)
             df['sma20'] = ta.sma(df['close'], length=20)
@@ -49,11 +50,6 @@ def get_expert_analysis():
             rsi_now = df['rsi'].iloc[-1]
             ema_now = df['ema9'].iloc[-1]
             sma_now = df['sma20'].iloc[-1]
-
-            # تحديد الاتجاه
-            trend = "جانبي ↔️"
-            if p > ema_now > sma_now: trend = "صاعد قوي 🔥"
-            elif p < ema_now < sma_now: trend = "هابط حاد ❄️"
 
             status = None
             if rsi_now < 35 and p > ema_now: status = 'CALL'
@@ -84,7 +80,7 @@ def get_expert_analysis():
                 active_trades[t] = {'type': status, 't1': targets[0]}
 
                 msg = (f"👨‍💻 **تقرير المحلل الفني الذكي**\n"
-                       f"🔍 السهم: `{t}` | الاتجاه: {trend}\n"
+                       f"🔍 السهم: `{t}`\n"
                        f"💰 السعر: `${p}` | السيولة: {v_desc}\n"
                        f"📊 RSI: {round(rsi_now)} | فوليوم: {vol_ratio}x\n"
                        f"------------------------------\n"
@@ -92,8 +88,7 @@ def get_expert_analysis():
                        f"------------------------------\n"
                        f"🎯 النوع: {'🟢 CALL' if status == 'CALL' else '🔴 PUT'}\n\n"
                        f"📐 **المحطات السعرية:**\n"
-                       f"🔹 دخول: `{p}`\n"
-                       f"🔸 وقف: `{stop}`\n"
+                       f"🔹 دخول: `{p}` | 🔸 وقف: `{stop}`\n"
                        f"🎯 هدف 1: `{targets[0]}`\n"
                        f"🎯 هدف 2: `{targets[1]}`")
                 
@@ -102,7 +97,8 @@ def get_expert_analysis():
         except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
-    Thread(target=run).start() # تشغيل الخادم الوهمي
+    # تشغيل البورت الوهمي في خيط منفصل
+    Thread(target=run).start()
     print("✅ المحلل والمتابع شغال الحين...")
     while True:
         get_expert_analysis()
