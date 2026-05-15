@@ -7,20 +7,26 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- إعدادات سلطان (النسخة المنضبطة) ---
+# --- إعدادات سلطان الخاصة ---
 TOKEN = '8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo'
 CHAT_ID = '1068286006'
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "البوت شغال بنظام إدارة الصفقات!"
+def home(): return "بوت سلطان: نسخة الوصف الدقيق شغال!"
 def run():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
 WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'AMD', 'RBLX', 'SPY', 'QQQ', 'OXY', 'CVX']
-sent_trades = {} # قاموس لتخزين آخر حالة لكل سهم
+sent_trades = {} 
+
+def get_safe_strike(current_price, trade_type):
+    strike = round(current_price * 2) / 2
+    if trade_type == "CALL 🟢" and strike <= current_price: strike += 0.5
+    if trade_type == "PUT 🔴" and strike >= current_price: strike -= 0.5
+    return strike
 
 def get_market_opportunities():
     for t in WATCHLIST:
@@ -34,44 +40,57 @@ def get_market_opportunities():
             df['rsi'] = ta.rsi(df['close'], length=14)
             df['ema9'] = ta.ema(df['close'], length=9)
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+            
+            vol_ratio = round(df['volume'].iloc[-1] / df['volume'].tail(20).mean(), 1)
             rsi_val = round(df['rsi'].iloc[-1])
+            ema_val = df['ema9'].iloc[-1]
             atr_val = df['atr'].iloc[-1]
 
-            # التحقق من الصفقات المفتوحة ومنع التعارض
             if t in sent_trades:
-                last_trade = sent_trades[t]
-                # إذا السعر ضرب الوقف، نرسل تنبيه خروج ونمسح التوصية
-                if (last_trade['type'] == "CALL 🟢" and p < last_trade['stop']) or \
-                   (last_trade['type'] == "PUT 🔴" and p > last_trade['stop']):
-                    bot.send_message(CHAT_ID, f"⚠️ **تنبيه خروج من {t}**\nالسعر تجاوز مستوى الوقف المحدد سابقاً. التزم بالحماية 🛑")
+                last = sent_trades[t]
+                if (last['type'] == "CALL 🟢" and p < last['stop']) or (last['type'] == "PUT 🔴" and p > last['stop']):
+                    bot.send_message(CHAT_ID, f"🛑 **خروج فني من {t}**\nالسعر كسر الوقف. برا السوق أفضل.")
                     del sent_trades[t]
                     continue
-                # إذا السعر لم يتغير كثيراً، لا نكرر الرسالة
-                if abs(p - last_trade['entry']) / last_trade['entry'] < 0.01:
-                    continue
+                if abs(p - last['entry']) / last['entry'] < 0.005: continue 
 
-            # نظام الصيد
-            status = "CALL 🟢" if rsi_val < 45 else "PUT 🔴"
+            status = "CALL 🟢" if rsi_val < 48 else "PUT 🔴"
+            
+            # حساب الثقة ووصفها
+            score = 30
+            if vol_ratio > 1.4: score += 35
+            if (status == "CALL 🟢" and p > ema_val) or (status == "PUT 🔴" and p < ema_val): score += 20
+            if rsi_val < 35 or rsi_val > 65: score += 15
+
+            confidence_text = "عالية جداً 🔥" if score >= 80 else "عالية ✅" if score >= 60 else "متوسطة 🟡" if score >= 45 else "ضعيفة ⚠️"
+            vol_text = "انفجارية 🚀" if vol_ratio > 2.0 else "عالية 📈" if vol_ratio > 1.4 else "متوسطة ⚖️" if vol_ratio > 0.8 else "ضعيفة 📉"
+
             stop = round(p - (atr_val * 1.5), 2) if "CALL" in status else round(p + (atr_val * 1.5), 2)
-            h1 = round(p + (atr_val * 2), 2) if "CALL" in status else round(p - (atr_val * 2), 2)
+            h1 = round(p + (atr_val * 2.5), 2) if "CALL" in status else round(p - (atr_val * 2.5), 2)
+            safe_strike = get_safe_strike(p, status)
 
-            # تخزين الصفقة لمنع التكرار
             sent_trades[t] = {'type': status, 'entry': p, 'stop': stop}
 
-            msg = (f"🤖 **تحديث من البوت الآلي**\n"
-                   f"📊 إشارة تداول: {t}\n"
-                   f"💰 السعر الحالي: `${p}`\n"
+            msg = (f"🤖 **إشارة تداول من رادارك**\n"
+                   f"📊 السهم: **{t}**\n"
+                   f"💰 السعر: `${p}`\n"
                    f"----------------------------------\n"
-                   f"الاتجاه: {status}\n"
+                   f"🎯 **درجة الثقة: {confidence_text}**\n"
+                   f"🌊 **السيولة: {vol_text}**\n"
+                   f"----------------------------------\n"
+                   f"📈 الاتجاه: {status}\n\n"
                    f"⚙️ **خطة العمل:**\n"
                    f"🔷 دخول: `{p}`\n"
-                   f"🛑 وقف الخسارة: `{stop}`\n"
-                   f"🎯 الهدف: `{h1}`\n\n"
-                   f"💡 *ملاحظة: البوت لن يكرر التوصية إذا لم يتغير السعر بشكل ملحوظ.*")
+                   f"🛑 وقف: `{stop}`\n"
+                   f"🎯 هدف: `{h1}`\n\n"
+                   f"📋 **العقد المقترح:**\n"
+                   f"Strike: **{safe_strike}** | {'🟢' if 'CALL' in status else '🔴'}\n"
+                   f"----------------------------------\n"
+                   f"💡 *نصيحة: ركز على صفقات الثقة العالية فقط.*")
             
             bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
             time.sleep(2)
-        except Exception as e: print(f"Error: {e}")
+        except Exception as e: print(f"Error in {t}: {e}")
 
 if __name__ == "__main__":
     Thread(target=run).start()
