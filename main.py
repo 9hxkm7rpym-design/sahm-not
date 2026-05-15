@@ -7,26 +7,20 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- إعدادات سلطان الخاصة ---
+# --- إعدادات سلطان (نسخة الفلتر الصارم) ---
 TOKEN = '8308789681:AAHYYl6et5Ef7h8s8A4D7IKPm-vczx6SvIo'
 CHAT_ID = '1068286006'
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "رادار سلطان: التحليل الشامل شغال!"
+def home(): return "رادار سلطان: نسخة الفلتر الصارم شغالة!"
 def run():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
 WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'AMD', 'RBLX', 'SPY', 'QQQ', 'OXY', 'CVX']
 sent_trades = {} 
-
-def get_safe_strike(current_price, trade_type):
-    strike = round(current_price * 2) / 2
-    if "CALL" in trade_type and strike <= current_price: strike += 0.5
-    if "PUT" in trade_type and strike >= current_price: strike -= 0.5
-    return strike
 
 def get_market_opportunities():
     for t in WATCHLIST:
@@ -37,69 +31,63 @@ def get_market_opportunities():
             df = pd.DataFrame(data).ffill()
             
             p = round(df['close'].iloc[-1], 2)
-            high_20 = df['high'].tail(20).max()
-            low_20 = df['low'].tail(20).min()
-
+            df['ema20'] = ta.ema(df['close'], length=20)
             df['rsi'] = ta.rsi(df['close'], length=14)
-            df['ema9'] = ta.ema(df['close'], length=9)
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
             
-            vol_ratio = round(df['volume'].iloc[-1] / df['volume'].tail(20).mean(), 1)
+            ema_val = df['ema20'].iloc[-1]
             rsi_val = round(df['rsi'].iloc[-1])
-            ema_val = df['ema9'].iloc[-1]
             atr_val = df['atr'].iloc[-1]
+            vol_ratio = round(df['volume'].iloc[-1] / df['volume'].tail(20).mean(), 1)
 
-            # --- منطق تحديد الفرصة والتحليل ---
-            status = "CALL 🟢" if rsi_val < 50 else "PUT 🔴"
+            # --- الفلتر الصارم: لا دخول عكس الاتجاه اللحظي ---
+            status = None
+            analysis = []
             score = 20
-            analysis_text = []
 
-            # تحليل الدعم والمقاومة والسيولة
-            if p <= low_20 * 1.002: 
-                score += 30
-                analysis_text.append("ارتداد من دعم")
-            if p >= high_20 * 0.998:
-                score += 30
-                analysis_text.append("رفض من مقاومة")
-            if vol_ratio > 1.5:
-                score += 30
-                analysis_text.append(f"سيولة انفجارية ({vol_ratio}x)")
-            if (status == "CALL 🟢" and p > ema_val) or (status == "PUT 🔴" and p < ema_val):
-                score += 20
-                analysis_text.append("تأكيد اتجاه")
+            if p > ema_val and rsi_val < 50: # CALL فقط إذا السعر فوق المتوسط
+                status = "CALL 🟢"
+                analysis.append("تأسيس فوق المتوسط")
+            elif p < ema_val and rsi_val > 50: # PUT فقط إذا السعر تحت المتوسط
+                status = "PUT 🔴"
+                analysis.append("فشل تحت المتوسط")
 
-            # تصنيف درجة الثقة
-            if score >= 80: confidence = "عالية جداً 🔥"
-            elif score >= 55: confidence = "متوسطة ✅"
-            else: confidence = "ضعيفة (مخاطرة) ⚠️"
+            if not status: continue # تجاهل أي إشارة "عكس السير"
 
-            # منع التكرار وإدارة الوقف
+            # حساب الثقة
+            if vol_ratio > 1.5: 
+                score += 40
+                analysis.append(f"سيولة عالية ({vol_ratio}x)")
+            if (status == "CALL 🟢" and rsi_val < 35) or (status == "PUT 🔴" and rsi_val > 65):
+                score += 30
+                analysis.append("منطقة انعكاس ذهبية")
+
+            # إدارة التكرار والوقف
             if t in sent_trades:
                 last = sent_trades[t]
-                if abs(p - last['entry']) / last['entry'] < 0.005: continue 
                 if (last['type'] == "CALL 🟢" and p < last['stop']) or (last['type'] == "PUT 🔴" and p > last['stop']):
-                    bot.send_message(CHAT_ID, f"🛑 **تنبيه خروج من {t}**\nالسعر تجاوز الوقف. احمِ محفظتك!")
+                    bot.send_message(CHAT_ID, f"🛑 **خروج من {t}**\nالسهم كسر مستوى الأمان. لا تعاند الاتجاه!")
                     del sent_trades[t]
                     continue
+                if abs(p - last['entry']) / last['entry'] < 0.005: continue 
 
-            stop = round(p - (atr_val * 1.5), 2) if "CALL" in status else round(p + (atr_val * 1.5), 2)
+            confidence = "عالية جداً 🔥" if score >= 80 else "جيدة ✅" if score >= 55 else "ضعيفة ⚠️"
+            stop = round(p - (atr_val * 1.8), 2) if "CALL" in status else round(p + (atr_val * 1.8), 2)
             h1 = round(p + (atr_val * 2.5), 2) if "CALL" in status else round(p - (atr_val * 2.5), 2)
-            safe_strike = get_safe_strike(p, status)
+
             sent_trades[t] = {'type': status, 'entry': p, 'stop': stop}
 
-            # --- الرسالة النهائية (الجامدة) ---
-            msg = (f"🚀 **فرصة مكتشفة: {t}**\n"
+            msg = (f"🤖 **تحليل الرادار: {t}**\n"
+                   f"💰 السعر: `${p}`\n"
                    f"----------------------------------\n"
-                   f"🎯 **ثقة الصفقة: {confidence}**\n"
-                   f"🧐 **التحليل:** {', '.join(analysis_text) if analysis_text else 'مضاربة سريعة'}\n"
+                   f"🎯 **الثقة: {confidence}**\n"
+                   f"🧐 **التحليل:** {', '.join(analysis)}\n"
                    f"----------------------------------\n"
-                   f"📈 الاتجاه: {status}\n"
-                   f"💰 السعر: `${p}`\n\n"
-                   f"⚙️ **خطة العمل:**\n"
-                   f"🔷 دخول: `{p}`\n"
-                   f"🛑 وقف: `{stop}`\n"
+                   f"📈 الاتجاه: {status}\n\n"
+                   f"⚙️ **الخطة:**\n"
+                   f"🔷 دخول: `{p}` | 🛑 وقف: `{stop}`\n"
                    f"🎯 هدف: `{h1}`\n\n"
-                   f"📋 **العقد:** Strike {safe_strike} | {'🟢' if 'CALL' in status else '🔴'}")
+                   f"💡 *نصيحة: إذا الثقة 'ضعيفة' واليوم جمعة، خلك متفرج.*")
             
             bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
             time.sleep(2)
