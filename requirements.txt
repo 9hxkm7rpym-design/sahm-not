@@ -1,6 +1,6 @@
 pyTelegramBotAPI
+requests
 pandas
 pandas_ta
-scipy
-requests
 flask
+gunicorn
