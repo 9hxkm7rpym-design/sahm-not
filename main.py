@@ -7,14 +7,14 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- إعدادات منظومة عبدالرحمن الشاملة بمقياس الثقة والسيولة (النسخة الحقيقية للافتتاح) ---
+# --- إعدادات منظومة عبدالرحمن الذكية الشاملة للسيولة ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "منظومة عبدالرحمن بمقياس الثقة والسيولة تعمل بأعلى كفاءة في السوق الحقيقي 🦅🔥"
+def home(): return "منظومة عبدالرحمن الذكية للسيولة تعمل ومراقبة حالة السوق مفعلة 🦅🔥"
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -48,7 +48,6 @@ def get_market_data(t, interval, range_data):
         return None
 
 def check_spy_trend():
-    """فحص اتجاه السوق العام عبر مؤشر SPY"""
     df_spy = get_market_data('SPY', '5m', '1d')
     if df_spy is None or len(df_spy) < 10: return "NEUTRAL"
     spy_macd = ta.macd(df_spy['close'], fast=12, slow=26, signal=9)
@@ -61,7 +60,12 @@ def analyze_ticker(t):
         df = get_market_data(t, '5m', '1d')
         if df is None or len(df) < 20: return
 
-        # 1. حساب المؤشرات الفنية الأساسية لغزارة الفرص
+        # 🚨 حارس بوابة السوق: إذا الفوليوم الحالي صفر أو ميت، يعني السوق مقفل -> اخرج فوراً ولا ترسل
+        current_volume = df['volume'].iloc[-1]
+        if current_volume <= 0:
+            return
+
+        # 1. حساب المؤشرات الفنية
         macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
         df['rsi'] = ta.rsi(df['close'], length=14)
         if macd_df is None or df['rsi'].empty: return
@@ -71,27 +75,25 @@ def analyze_ticker(t):
         rsi_v = round(df['rsi'].iloc[-1], 1)
         p = round(df['close'].iloc[-1], 2)
 
-        # 2. حساب الدعم والمقاومة التاريخية والـ SMC (السيولة)
+        # 2. حساب الدعم والمقاومة والسيولة
         res = round(df['high'].tail(20).max(), 2)
         sup = round(df['low'].tail(20).min(), 2)
         mean_vol = df['volume'].tail(20).mean()
         vol_ratio = round(df['volume'].iloc[-1] / mean_vol, 1) if mean_vol > 0 else 1.0
         
-        # رادار السيولة والحيتان (SMC)
         is_heavy_cash = vol_ratio >= 1.5
 
-        # 3. فحص مستويات ما قبل الافتتاح (قمة وقاع Pre-Market)
+        # 3. مستويات ما قبل الافتتاح
         df_pm = get_market_data(t, '30m', '1d')
         pm_high = df_pm['high'].iloc[:13].max() if df_pm is not None and len(df_pm) >= 13 else res
         pm_low = df_pm['low'].iloc[:13].min() if df_pm is not None and len(df_pm) >= 13 else sup
 
-        # 4. التقاط اتجاه السوق العام
+        # 4. اتجاه السوق العام
         spy_status = check_spy_trend()
 
         send_signal = False
         signal_type = None
 
-        # شروط الإرسال العريضة (عشان تجيك فرص كثيرة ومستمرة)
         if macd_line > macd_signal:
             signal_type = "CALL 🟢"
             send_signal = True
@@ -103,7 +105,6 @@ def analyze_ticker(t):
             signal_key = f"{t}_live"
             if last_signals.get(signal_key) != signal_type:
                 
-                # --- منظومة وزن ومقياس الثقة الذكي ---
                 confidence_score = "متوسطة 🟨"
                 color_tag = "⚡️"
                 reason = "الصفقة مدعومة بزخم فني طبيعي وسيولة مضاربية متوفرة."
@@ -128,7 +129,6 @@ def analyze_ticker(t):
                         color_tag = "⚠️ [تنبيه مخاطرة]"
                         reason = "السهم قريب من مناطق دعم تاريخية (الأرض) أو السيولة ضعيفة، والسوق العام صامد."
 
-                # جلب آخر خبر عاجل للسهم لزيادة الأمان
                 news_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={t}"
                 news_r = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'}).json()
                 latest_news = news_r['news'][0]['title'] if (news_r.get('news') and len(news_r['news']) > 0) else "لا توجد أخبار مؤثرة حالياً"
@@ -157,14 +157,14 @@ def analyze_ticker(t):
 
 def main_loop():
     try:
-        bot.send_message(CHAT_ID, "🦅 تم تفعيل منظومة 'القناص الحقيقي الحية' بنجاح!\n- الرادار جالس الحين يراقب السيولة والكاش الحقيقي لايف.\n- الصفقات تجيك بكثرة ومفرزة بالميزان الثلاثي.\nجاهزون لقنص السوق الحين! 🔥")
+        bot.send_message(CHAT_ID, "🦅 تم تفعيل منظومة 'القناص الحقيقي الحية' بنجاح!\n- تم تفعيل حارس السوق التلقائي بنجاح.\n- البوت بيسكت الحين لأن السوق مقفل، ويبدأ يضخ صفقات حية أول ما يفتح السوق لايف! 🔥")
     except Exception as e:
         print(e)
 
     while True:
         for t in WATCHLIST:
             analyze_ticker(t)
-        time.sleep(300) # دورة فحص شاملة وموزونة كل 5 دقائق
+        time.sleep(300)
 
 if __name__ == "__main__":
     Thread(target=run_flask).start()
