@@ -7,20 +7,20 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- منظومة عبدالرحمن الاحترافية (الدرجات + منع التكرار + الأهداف الثلاثة) ---
+# --- منظومة عبدالرحمن الملكية الشاملة (نسخة المتابعة الحية للأهداف) ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "رادار عبدالرحمن الشامل بالدرجات شغال لايف 🦅🔥"
+def home(): return "رادار عبدالرحمن الملكي والمتابع اللحظي شغال لايف 🦅🔥"
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
 
-# القائمة النخبة الـ 32 شركة
+# القائمة النخبة الـ 32 شركة المعتمدة
 WATCHLIST = [
     'AAPL', 'NVDA', 'TSLA', 'AMZN', 'AMD', 'LCID', 'NIO', 'RIVN', 'BABA', 
     'OXY', 'MSFT', 'GOOGL', 'META', 'AVGO', 'ASML', 'ADBE', 'CRM', 'PANW', 
@@ -29,6 +29,8 @@ WATCHLIST = [
 ]
 
 last_signals = {}
+# قاموس ذكي لمتابعة الأهداف والوقف لايف لكل سهم مفتوح
+active_trades = {}
 
 def get_live_data(ticker):
     try:
@@ -49,7 +51,7 @@ def get_live_data(ticker):
         return None
 
 def scan_market():
-    global last_signals
+    global last_signals, active_trades
     
     for t in WATCHLIST:
         try:
@@ -58,7 +60,43 @@ def scan_market():
 
             p = round(df['close'].iloc[-1], 2)
 
-            # 1. حساب الاتجاه بالسوبر تريند والـ RSI لـفريم الـ 15 دقيقة
+            # 🔥 [ميزة المتابعة اللحظية للأهداف والوقف] 🔥
+            if t in active_trades:
+                trade = active_trades[t]
+                # فحص الأهداف للكول
+                if trade['type'] == "CALL 🟢":
+                    if p >= trade['t1'] and not trade['t1_hit']:
+                        bot.send_message(CHAT_ID, f"🎯 **مبروك يا عبدالرحمن! تحقق الهدف الأول** ✅\nسهم `{t}` وصل للمحطة الأولى بنجاح: `${trade['t1']}` 💰")
+                        trade['t1_hit'] = True
+                    if p >= trade['t2'] and not trade['t2_hit']:
+                        bot.send_message(CHAT_ID, f"🚀 **كفوو! تحقق الهدف الثاني** ✅\nسهم `{t}` طار للمحطة الثانية: `${trade['t2']}` 🔥")
+                        trade['t2_hit'] = True
+                    if p >= trade['t3']:
+                        bot.send_message(CHAT_ID, f"👑 **يا ملك! تحقق الهدف الثالث بالكامل** ✅\nسهم `{t}` قفل مستهدفات الشارت عند: `${trade['t3']}` 💎")
+                        del active_trades[t]
+                        continue
+                    if p <= trade['sl']:
+                        bot.send_message(CHAT_ID, f"🛑 **تنبيه وقف الخسارة**\nسهم `{t}` ضرب وقف الخسارة القريب عند: `${trade['sl']}` 🧨")
+                        del active_trades[t]
+                        continue
+                # فحص الأهداف للبوت
+                elif trade['type'] == "PUT 🔴":
+                    if p <= trade['t1'] and not trade['t1_hit']:
+                        bot.send_message(CHAT_ID, f"🎯 **مبروك يا عبدالرحمن! تحقق الهدف الأول** ✅\nسهم `{t}` (PUT) وصل للمحطة الأولى بنجاح: `${trade['t1']}` 💰")
+                        trade['t1_hit'] = True
+                    if p <= trade['t2'] and not trade['t2_hit']:
+                        bot.send_message(CHAT_ID, f"🚀 **كفوو! تحقق الهدف الثاني** ✅\nسهم `{t}` (PUT) نزل للمحطة الثانية: `${trade['t2']}` 🔥")
+                        trade['t2_hit'] = True
+                    if p <= trade['t3']:
+                        bot.send_message(CHAT_ID, f"👑 **يا ملك! تحقق الهدف الثالث بالكامل** ✅\nسهم `{t}` (PUT) قفل مستهدفات الشارت عند: `${trade['t3']}` 💎")
+                        del active_trades[t]
+                        continue
+                    if p >= trade['sl']:
+                        bot.send_message(CHAT_ID, f"🛑 **تنبيه وقف الخسارة**\nسهم `{t}` (PUT) ضرب وقف الخسارة القريب عند: `${trade['sl']}` 🧨")
+                        del active_trades[t]
+                        continue
+
+            # 1. مؤشرات الموجة والزخم (SuperTrend + RSI)
             sti = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3)
             df['rsi'] = ta.rsi(df['close'], length=14)
             if sti is None or df['rsi'].empty: continue
@@ -66,19 +104,18 @@ def scan_market():
             trend_line = sti['SUPERTd_10_3.0'].iloc[-1]
             rsi_v = df['rsi'].iloc[-1]
 
-            # 2. حساب معدل تدفق السيولة لايف
+            # 2. فحص تدفق كاش السيولة اللحظي
             avg_vol = df['volume'].iloc[-11:-1].mean()
             last_complete_vol = df['volume'].iloc[-2]
             vol_ratio = round(last_complete_vol / avg_vol, 1) if avg_vol > 0 else 1.0
 
-            # 3. قراءة مستويات الشارت الحقيقية للأهداف
+            # 3. قراءة قمم وقيعان الشارت الحقيقية
             chart_high = round(df['high'].iloc[:-1].max(), 2)
             chart_low = round(df['low'].iloc[:-1].min(), 2)
 
             send_signal = False
             signal_type = ""
 
-            # فتحنا الشروط عشان نلقط كل الفرص (بدون تصفية الفوليوم في الدخول)
             if trend_line == 1 and rsi_v > 50:
                 signal_type = "CALL 🟢"
                 send_signal = True
@@ -87,21 +124,20 @@ def scan_market():
                 send_signal = True
 
             if send_signal:
-                # 🚫 قفل منع التكرار: إذا أرسل السهم بنفس الإشارة سابقاً ما يكرره أبداً
+                # 🚫 قفل منع التكرار الصارم
                 if last_signals.get(t) != signal_type:
                     
-                    # 🛠️ الفرز الذكي للدرجات بناءً على سيولة كاش الحيتان
                     if vol_ratio >= 1.3:
-                        confidence = "عــالــيــة جــداً (النخبة) 🟩"
-                        tag = "💎 [سيولة حيتان ضخمة SMC]"
+                        confidence = "النخبة (سيولة حيتان ضخمة) 🟩"
+                        icon = "💎"
                     elif vol_ratio >= 0.8:
-                        confidence = "متوسطة (مضاربية سريعة) 🟨"
-                        tag = "⚡️ [موجة زخم طبيعية]"
+                        confidence = "متوسطة (موجة زخم طبيعية) 🟨"
+                        icon = "⚡"
                     else:
                         confidence = "ضعيفة (مخاطرة عالية) 🟥"
-                        tag = "⚠️ [تنبيه اتجاه بدون سيولة]"
+                        icon = "⚠️"
 
-                    # حسبة مستويات الشارت للأهداف الثلاثة والوقف
+                    # حسبة مستويات الشارت الدقيقة للأهداف الثلاثة والوقف
                     if signal_type == "CALL 🟢":
                         max_target = chart_high if chart_high > p else round(p * 1.03, 2)
                         diff = (max_target - p) / 3
@@ -121,31 +157,42 @@ def scan_market():
                         stop_loss_hard = chart_high
                         stop_loss_fast = round(p + (chart_high - p) * 0.5, 2) if chart_high > p else round(p * 1.01, 2)
 
+                    # 💾 تخزين الصفقة الجديدة في الرام لمتابعة أهدافها لايف
+                    active_trades[t] = {
+                        'type': signal_type,
+                        't1': target1, 't2': target2, 't3': target3,
+                        'sl': stop_loss_fast,
+                        't1_hit': False, 't2_hit': False
+                    }
+
+                    # التنسيق المرئي الملكي الجديد
                     msg = (
-                        f"{tag} **رادار عبدالرحمن الشامل بالدرجات**\n\n"
-                        f"🎯 **درجة قوة الصفقة:** {confidence}\n"
-                        f"📌 **السهم المستهدف:** {t}\n"
-                        f"📈 **إشارة الأوبشن:** {signal_type}\n"
-                        f"💰 **سعر الدخول الحالي:** ${p}\n"
-                        f"📊 **معدل سيولة الحيتان:** {vol_ratio}x\n"
-                        f"----------------------------------\n"
-                        f"🎯 **الهدف الأول:** ${target1}\n"
-                        f"🎯 **الهدف الثاني:** ${target2}\n"
-                        f"🎯 **الهدف الثالث:** ${target3}\n"
-                        f"----------------------------------\n"
-                        f"🛑 **وقف خسارة قريب:** ${stop_loss_fast}\n"
-                        f"🛑 **وقف الخسارة الرئيسي:** ${stop_loss_hard}\n"
-                        f"----------------------------------"
+                        f"{icon} **رادار عبدالرحمن الشامل**\n"
+                        f"📊 **قوة الصفقة:** {confidence}\n"
+                        f"───────────────────\n"
+                        f"📌 **الـسـهـم:** `{t}`\n"
+                        f"📈 **الإشـارة:** *{signal_type}*\n"
+                        f"💰 **سعر الدخول الحالي:** `${p}`\n"
+                        f"🐋 **فوليوم الكاش:** `{vol_ratio}x`\n"
+                        f"───────────────────\n"
+                        f"🎯 **الهدف الأول:** `${target1}`\n"
+                        f"🎯 **الهدف الثاني:** `${target2}`\n"
+                        f"🎯 **الهدف الثالث:** `${target3}`\n"
+                        f"───────────────────\n"
+                        f"🛑 **وقف قريب:** `${stop_loss_fast}`\n"
+                        f"🛑 **وقف رئيسي:** `${stop_loss_hard}`\n"
+                        f"───────────────────"
                     )
-                    bot.send_message(CHAT_ID, msg)
-                    last_signals[t] = signal_type # حفظ الإشارة لمنع التكرار
+                    
+                    bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+                    last_signals[t] = signal_type 
                     time.sleep(2)
         except:
             continue
 
 def main():
     try:
-        bot.send_message(CHAT_ID, "🦅 تم تشغيل الرادار الشامل بنظام الدرجات ومكافحة التكرار!\n- كل الفرص بتجيك الحين.\n- الإشارات مفرزة (🟩 قوية / 🟨 متوسطة / 🟥 ضعيفة).\n- مستحيل تكرار نفس الصفقة لتجنب الإزعاج.")
+        bot.send_message(CHAT_ID, "🦅 **تم إطلاق الرادار الملكي بنظام المتابعة التلقائية!**\n- البوت الحين بيعلمك لايف أول ما يتحقق أي هدف من الأهداف الثلاثة أو يضرب الوقف.\n\n*ارتاح وخل عين البوت تتابع عنك!* 🚀🔥", parse_mode='Markdown')
     except Exception as e:
         print(e)
 
