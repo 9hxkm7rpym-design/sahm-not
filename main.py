@@ -7,14 +7,14 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- إعدادات منظومة عبدالرحمن الفورية المحدثة للسيولة ---
+# --- إعدادات منظومة عبدالرحمن الشاملة بمستويات الشارت الحقيقية ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "رادار عبدالرحمن الفوري الصاحي شغال لايف 🦅🔥"
+def home(): return "رادار عبدالرحمن بمستويات الشارت الحية شغال 🦅🔥"
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -62,7 +62,7 @@ def scan_market():
     for t in WATCHLIST:
         try:
             df = get_live_data(t)
-            if df is None or len(df) < 15: continue
+            if df is None or len(df) < 20: continue
 
             # الحسابات الفنية الحية الفورية
             macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
@@ -74,14 +74,21 @@ def scan_market():
             macd_line = macd_df['MACD_12_26_9'].iloc[-1]
             macd_signal = macd_df['MACDs_12_26_9'].iloc[-1]
 
-            # 🐋 التعديل الذهبي: حساب المتوسط بناءً على الشموع السابقة المكتملة لتفادي الـ 0.0x
-            avg_vol = df['volume'].iloc[-11:-1].mean() # متوسط 10 شموع سابقة مكتملة
-            last_complete_vol = df['volume'].iloc[-2]  # فوليوم آخر شمعة قفلت بالكامل
+            # حساب السيولة اللحظية بناءً على الشموع السابقة المكتملة
+            avg_vol = df['volume'].iloc[-11:-1].mean()
+            last_complete_vol = df['volume'].iloc[-2]
             vol_ratio = round(last_complete_vol / avg_vol, 1) if avg_vol > 0 else 1.0
 
-            # الدعم والمقاومة اللحظية الفورية
-            resistance = round(df['high'].tail(15).max(), 2)
-            support = round(df['low'].tail(15).min(), 2)
+            # 🎯 سحب الأهداف والوقف مباشرة من أعلى قمة وأقل قاع في شارت اليوم كامل
+            chart_high = round(df['high'].max(), 2)
+            chart_low = round(df['low'].max(), 2) # قاع الشارت
+            
+            # للتأكد من وجود مسافة منطقية في الأهداف إذا كان السهم عند القمة أو القاع الحالية
+            target_call = chart_high if chart_high > p else round(p * 1.01, 2)
+            stop_call = round(df['low'].min(), 2) if round(df['low'].min(), 2) < p else round(p * 0.99, 2)
+            
+            target_put = round(df['low'].min(), 2) if round(df['low'].min(), 2) < p else round(p * 0.99, 2)
+            stop_put = chart_high if chart_high > p else round(p * 1.01, 2)
 
             send_signal = False
             signal_type = ""
@@ -96,7 +103,15 @@ def scan_market():
             if send_signal:
                 if last_signals.get(t) != signal_type:
                     
-                    # الفرز الثلاثي بناءً على السيولة الحقيقية المكتملة
+                    # اختيار المستويات الفنية بناءً على نوع الإشارة
+                    if signal_type == "CALL 🟢":
+                        target = target_call
+                        stop_loss = stop_call
+                    else:
+                        target = target_put
+                        stop_loss = stop_put
+                    
+                    # الفرز الثلاثي بناءً على السيولة
                     if vol_ratio >= 1.5 and ((signal_type == "CALL 🟢" and spy_status == "BULLISH") or (signal_type == "PUT 🔴" and spy_status == "BEARISH")):
                         confidence = "عــالــيــة جــداً 🟩"
                         tag = "💎 [دخول كاش الحيتان SMC]"
@@ -111,7 +126,7 @@ def scan_market():
                         analysis = "السيولة اللحظية ميتة أو ضعيفة جداً، والدخول في هذه المنطقة يعتبر عالي المخاطرة."
 
                     msg = (
-                        f"{tag} **رادار عبدالرحمن الصاحي للسيولة الفورية**\n\n"
+                        f"{tag} **رادار عبدالرحمن لمستويات الشارت الحية**\n\n"
                         f"🎯 **نسبة النجاح المتوقعة:** {confidence}\n"
                         f"📌 **السهم المستهدف:** {t}\n"
                         f"📈 **إشارة الأوبشن:** {signal_type}\n"
@@ -119,8 +134,8 @@ def scan_market():
                         f"----------------------------------\n"
                         f"🔍 **تحليل السيولة والميزان:**\n{analysis}\n\n"
                         f"📊 **معدل تدفق الكاش الحالي:** {vol_ratio}x\n"
-                        f"🎯 **الهدف اللحظي المتوقع:** ${resistance if signal_type == 'CALL 🟢' else support}\n"
-                        f"🛑 **وقف الخسارة اللحظي:** ${support if signal_type == 'CALL 🟢' else resistance}\n"
+                        f"🎯 **الهدف الفني (مقاومة الشارت):** ${target}\n"
+                        f"🛑 **وقف الخسارة الفني (دعم الشارت):** ${stop_loss}\n"
                         f"📉 **حالة السوق العام SPY:** {spy_status}\n"
                         f"----------------------------------"
                     )
@@ -132,7 +147,7 @@ def scan_market():
 
 def main():
     try:
-        bot.send_message(CHAT_ID, "🚀 تم تحديث رادار السيولة الحية بنجاح!\n- تم تعديل فلتر الفوليوم ليقرأ الشموع المكتملة.\n- راقب الرسائل القادمة الحين بتشوف أرقام السيولة الحقيقية الحية.")
+        bot.send_message(CHAT_ID, "🚀 تم تفعيل رادار الشارت والمستويات الفنية!\n- تم إلغاء النسب المئوية الثابتة.\n- الأهداف والوقف الحين مأخوذة من أعلى قمة وأقل قاع حركي للسهم على شارت اليوم.")
     except Exception as e:
         print(e)
 
