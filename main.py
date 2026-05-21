@@ -7,14 +7,14 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- رادار عبدالرحمن المتكامل بأهداف الشارت الثلاثة حية ---
+# --- منظومة عبدالرحمن الاحترافية (الدرجات + منع التكرار + الأهداف الثلاثة) ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "رادار الأهداف الثلاثة والسيولة شغال لايف 🦅🔥"
+def home(): return "رادار عبدالرحمن الشامل بالدرجات شغال لايف 🦅🔥"
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -32,7 +32,6 @@ last_signals = {}
 
 def get_live_data(ticker):
     try:
-        # فريم 15 دقيقة لتصفية الضوضاء واقتناص الموجات الكبيرة
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=15m&range=5d"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         r = requests.get(url, headers=headers, timeout=10).json()
@@ -59,7 +58,7 @@ def scan_market():
 
             p = round(df['close'].iloc[-1], 2)
 
-            # حساب السوبر تريند والـ RSI لتأكيد الاتجاه
+            # 1. حساب الاتجاه بالسوبر تريند والـ RSI لـفريم الـ 15 دقيقة
             sti = ta.supertrend(df['high'], df['low'], df['close'], length=10, multiplier=3)
             df['rsi'] = ta.rsi(df['close'], length=14)
             if sti is None or df['rsi'].empty: continue
@@ -67,34 +66,45 @@ def scan_market():
             trend_line = sti['SUPERTd_10_3.0'].iloc[-1]
             rsi_v = df['rsi'].iloc[-1]
 
-            # فلتر كاش الحيتان والسيولة
+            # 2. حساب معدل تدفق السيولة لايف
             avg_vol = df['volume'].iloc[-11:-1].mean()
             last_complete_vol = df['volume'].iloc[-2]
             vol_ratio = round(last_complete_vol / avg_vol, 1) if avg_vol > 0 else 1.0
 
-            # قراءة مستويات الشارت الحقيقية (الدعم والمقاومة الكلية لليوم)
+            # 3. قراءة مستويات الشارت الحقيقية للأهداف
             chart_high = round(df['high'].iloc[:-1].max(), 2)
             chart_low = round(df['low'].iloc[:-1].min(), 2)
 
             send_signal = False
             signal_type = ""
 
-            # شروط الدخول: موجة واضحة + سيولة حيتان أعلى من المعدل الطبيعي
-            if trend_line == 1 and rsi_v > 50 and vol_ratio >= 1.1:
+            # فتحنا الشروط عشان نلقط كل الفرص (بدون تصفية الفوليوم في الدخول)
+            if trend_line == 1 and rsi_v > 50:
                 signal_type = "CALL 🟢"
                 send_signal = True
-            elif trend_line == -1 and rsi_v < 50 and vol_ratio >= 1.1:
+            elif trend_line == -1 and rsi_v < 50:
                 signal_type = "PUT 🔴"
                 send_signal = True
 
             if send_signal:
+                # 🚫 قفل منع التكرار: إذا أرسل السهم بنفس الإشارة سابقاً ما يكرره أبداً
                 if last_signals.get(t) != signal_type:
                     
-                    # 🛠️ الحسبة الهندسية للأهداف الثلاثة والوقف من الشارت بدون نسب مئوية ثابتة
+                    # 🛠️ الفرز الذكي للدرجات بناءً على سيولة كاش الحيتان
+                    if vol_ratio >= 1.3:
+                        confidence = "عــالــيــة جــداً (النخبة) 🟩"
+                        tag = "💎 [سيولة حيتان ضخمة SMC]"
+                    elif vol_ratio >= 0.8:
+                        confidence = "متوسطة (مضاربية سريعة) 🟨"
+                        tag = "⚡️ [موجة زخم طبيعية]"
+                    else:
+                        confidence = "ضعيفة (مخاطرة عالية) 🟥"
+                        tag = "⚠️ [تنبيه اتجاه بدون سيولة]"
+
+                    # حسبة مستويات الشارت للأهداف الثلاثة والوقف
                     if signal_type == "CALL 🟢":
                         max_target = chart_high if chart_high > p else round(p * 1.03, 2)
                         diff = (max_target - p) / 3
-                        
                         target1 = round(p + diff, 2)
                         target2 = round(p + (diff * 2), 2)
                         target3 = round(max_target, 2)
@@ -104,7 +114,6 @@ def scan_market():
                     else:
                         min_target = chart_low if chart_low < p else round(p * 0.97, 2)
                         diff = (p - min_target) / 3
-                        
                         target1 = round(p - diff, 2)
                         target2 = round(p - (diff * 2), 2)
                         target3 = round(min_target, 2)
@@ -112,9 +121,9 @@ def scan_market():
                         stop_loss_hard = chart_high
                         stop_loss_fast = round(p + (chart_high - p) * 0.5, 2) if chart_high > p else round(p * 1.01, 2)
 
-                    # رسالة منسقة بالملي تعزل التشتيت وتعطيك مستوياتك الصريحة
                     msg = (
-                        f"🐋 **رادار عبدالرحمن الشامل - أهداف الموجة الحية**\n\n"
+                        f"{tag} **رادار عبدالرحمن الشامل بالدرجات**\n\n"
+                        f"🎯 **درجة قوة الصفقة:** {confidence}\n"
                         f"📌 **السهم المستهدف:** {t}\n"
                         f"📈 **إشارة الأوبشن:** {signal_type}\n"
                         f"💰 **سعر الدخول الحالي:** ${p}\n"
@@ -122,21 +131,21 @@ def scan_market():
                         f"----------------------------------\n"
                         f"🎯 **الهدف الأول:** ${target1}\n"
                         f"🎯 **الهدف الثاني:** ${target2}\n"
-                        f"🎯 **الهدف الثالث (المقاومة/الدعم):** ${target3}\n"
+                        f"🎯 **الهدف الثالث:** ${target3}\n"
                         f"----------------------------------\n"
-                        f"🛑 **وقف خسارة مضاربي (قريب):** ${stop_loss_fast}\n"
-                        f"🛑 **وقف الخسارة الرئيسي (الشارت):** ${stop_loss_hard}\n"
+                        f"🛑 **وقف خسارة قريب:** ${stop_loss_fast}\n"
+                        f"🛑 **وقف الخسارة الرئيسي:** ${stop_loss_hard}\n"
                         f"----------------------------------"
                     )
                     bot.send_message(CHAT_ID, msg)
-                    last_signals[t] = signal_type
+                    last_signals[t] = signal_type # حفظ الإشارة لمنع التكرار
                     time.sleep(2)
         except:
             continue
 
 def main():
     try:
-        bot.send_message(CHAT_ID, "🦅 تم تحديث رادار الأهداف الثلاثة والوقف المزدوج بنجاح!\n- الأهداف مقسمة ومحسوبة بالملي من مستويات الشارت الفعلي لتأمين الأرباح أولاً بأول.")
+        bot.send_message(CHAT_ID, "🦅 تم تشغيل الرادار الشامل بنظام الدرجات ومكافحة التكرار!\n- كل الفرص بتجيك الحين.\n- الإشارات مفرزة (🟩 قوية / 🟨 متوسطة / 🟥 ضعيفة).\n- مستحيل تكرار نفس الصفقة لتجنب الإزعاج.")
     except Exception as e:
         print(e)
 
