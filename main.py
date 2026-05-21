@@ -6,10 +6,9 @@ import pandas_ta as ta
 from flask import Flask
 from threading import Thread
 import os
-from datetime import datetime
-import pytz
+from datetime import datetime, timedelta
 
-# --- إعدادات منظومة عبدالرحمن الشاملة المحدثة زمنيًا ---
+# --- إعدادات منظومة عبدالرحمن الشاملة المحدثة زمنيًا (نسخة الأمان الصارمة) ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
@@ -50,16 +49,16 @@ def get_market_data(t, interval, range_data):
         return None
 
 def is_market_open():
-    """الحل البديل والأضمن: فحص الوقت الحالي بتوقيت السعودية"""
-    tz_sa = pytz.timezone('Asia/Riyadh')
-    now_sa = datetime.now(tz_sa)
+    """حساب توقيت السعودية بدقة عبر زيادة 3 ساعات على التوقيت العالمي وبدون مكاتب خارجية"""
+    now_utc = datetime.utcnow()
+    now_sa = now_utc + timedelta(hours=3)
     
-    # السوق الأمريكي شغال من الاثنين إلى الجمعة
+    # أيام عمل السوق الأمريكي من الاثنين إلى الجمعة
     if now_sa.weekday() >= 5: 
         return False
         
     current_time = now_sa.strftime("%H:%M")
-    # فترة التداول بتوقيت السعودية: من 16:30 إلى 23:00
+    # فترة التداول بتوقيت السعودية: من 16:30 (4:30 عصراً) إلى 23:00 (11:00 بالليل)
     return "16:30" <= current_time <= "23:00"
 
 def check_spy_trend():
@@ -75,7 +74,7 @@ def analyze_ticker(t):
         df = get_market_data(t, '5m', '1d')
         if df is None or len(df) < 20: return
 
-        # 1. حساب المؤشرات الفنية الأساسية لغزارة الفرص
+        # 1. حساب المؤشرات الفنية
         macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
         df['rsi'] = ta.rsi(df['close'], length=14)
         if macd_df is None or df['rsi'].empty: return
@@ -85,7 +84,7 @@ def analyze_ticker(t):
         rsi_v = round(df['rsi'].iloc[-1], 1)
         p = round(df['close'].iloc[-1], 2)
 
-        # 2. حساب الدعم والمقاومة التاريخية والـ SMC (السيولة)
+        # 2. حساب الدعم والمقاومة والسيولة (SMC)
         res = round(df['high'].tail(20).max(), 2)
         sup = round(df['low'].tail(20).min(), 2)
         mean_vol = df['volume'].tail(20).mean()
@@ -93,12 +92,12 @@ def analyze_ticker(t):
         
         is_heavy_cash = vol_ratio >= 1.5
 
-        # 3. فحص مستويات ما قبل الافتتاح (Pre-Market)
+        # 3. فحص مستويات ما قبل الافتتاح
         df_pm = get_market_data(t, '30m', '1d')
         pm_high = df_pm['high'].iloc[:13].max() if df_pm is not None and len(df_pm) >= 13 else res
         pm_low = df_pm['low'].iloc[:13].min() if df_pm is not None and len(df_pm) >= 13 else sup
 
-        # 4. التقاط اتجاه السوق العام
+        # 4. اتجاه السوق العام
         spy_status = check_spy_trend()
 
         send_signal = False
@@ -167,7 +166,7 @@ def analyze_ticker(t):
 
 def main_loop():
     try:
-        bot.send_message(CHAT_ID, "🚀 تم إطلاق التحديث الزمني بنجاح!\nالرادار شغال الحين وبدأ يفحص الأسهم لايف فوراً وبدون تعليق الفوليوم. راقب القناة الحين! 🔥")
+        bot.send_message(CHAT_ID, "🚀 تم إطلاق التحديث الآمن بنجاح وبدون مكاتب خارجية!\nالرادار شغال الحين وبدأ يفحص الأسهم لايف فوراً وبأعلى دقة زمنية. راقب القناة الحين! 🔥")
     except Exception as e:
         print(e)
 
@@ -175,7 +174,7 @@ def main_loop():
         if is_market_open():
             for t in WATCHLIST:
                 analyze_ticker(t)
-        time.sleep(180) # فحص متواصل كل 3 دقائق لزيادة غزارة الفرص واقتناص الحركة
+        time.sleep(180) # فحص متواصل كل 3 دقائق لاقتناص حركة الكاش
 
 if __name__ == "__main__":
     Thread(target=run_flask).start()
