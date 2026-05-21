@@ -7,14 +7,14 @@ from flask import Flask
 from threading import Thread
 import os
 
-# --- إعدادات منظومة عبدالرحمن الشاملة بمستويات الشارت الحقيقية ---
+# --- منظومة عبدالرحمن الفورية بنظام الدرجات ومناطق الدخول الدقيقة ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
 
 app = Flask('')
 @app.route('/')
-def home(): return "رادار عبدالرحمن بمستويات الشارت الحية شغال 🦅🔥"
+def home(): return "رادار عبدالرحمن الشامل شغال لايف 🦅🔥"
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -29,6 +29,7 @@ WATCHLIST = [
 ]
 
 last_signals = {}
+last_signal_times = {}
 
 def get_live_data(ticker):
     try:
@@ -48,106 +49,104 @@ def get_live_data(ticker):
     except:
         return None
 
-def check_spy_live():
-    df_spy = get_live_data('SPY')
-    if df_spy is None or len(df_spy) < 10: return "NEUTRAL"
-    macd = ta.macd(df_spy['close'], fast=12, slow=26, signal=9)
-    if macd is None: return "NEUTRAL"
-    return "BULLISH" if macd['MACD_12_26_9'].iloc[-1] > macd['MACDs_12_26_9'].iloc[-1] else "BEARISH"
-
 def scan_market():
-    global last_signals
-    spy_status = check_spy_live()
+    global last_signals, last_signal_times
+    current_time_now = time.time()
     
     for t in WATCHLIST:
         try:
             df = get_live_data(t)
-            if df is None or len(df) < 20: continue
-
-            # الحسابات الفنية الحية الفورية
-            macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
-            df['rsi'] = ta.rsi(df['close'], length=14)
-            if macd_df is None or df['rsi'].empty: continue
+            if df is None or len(df) < 25: continue
 
             p = round(df['close'].iloc[-1], 2)
-            rsi_v = round(df['rsi'].iloc[-1], 1)
-            macd_line = macd_df['MACD_12_26_9'].iloc[-1]
-            macd_signal = macd_df['MACDs_12_26_9'].iloc[-1]
 
-            # حساب السيولة اللحظية بناءً على الشموع السابقة المكتملة
+            # حساب المؤشرات الفنية
+            df['rsi'] = ta.rsi(df['close'], length=14)
+            df['ema9'] = ta.ema(df['close'], length=9)
+            
+            if df['rsi'].empty or df['ema9'].empty: continue
+            
+            rsi_v = round(df['rsi'].iloc[-1], 1)
+            ema9_v = df['ema9'].iloc[-1]
+
+            # حساب السيولة اللحظية
             avg_vol = df['volume'].iloc[-11:-1].mean()
             last_complete_vol = df['volume'].iloc[-2]
             vol_ratio = round(last_complete_vol / avg_vol, 1) if avg_vol > 0 else 1.0
 
-            # 🎯 سحب الأهداف والوقف مباشرة من أعلى قمة وأقل قاع في شارت اليوم كامل
-            chart_high = round(df['high'].max(), 2)
-            chart_low = round(df['low'].max(), 2) # قاع الشارت
-            
-            # للتأكد من وجود مسافة منطقية في الأهداف إذا كان السهم عند القمة أو القاع الحالية
-            target_call = chart_high if chart_high > p else round(p * 1.01, 2)
-            stop_call = round(df['low'].min(), 2) if round(df['low'].min(), 2) < p else round(p * 0.99, 2)
-            
-            target_put = round(df['low'].min(), 2) if round(df['low'].min(), 2) < p else round(p * 0.99, 2)
-            stop_put = chart_high if chart_high > p else round(p * 1.01, 2)
+            # قراءة مستويات القمم والقيعان للشارت اليومي
+            chart_high = round(df['high'].iloc[:-1].max(), 2)
+            chart_low = round(df['low'].iloc[:-1].min(), 2)
 
             send_signal = False
             signal_type = ""
 
-            if macd_line > macd_signal:
+            if p >= (chart_high * 0.995):
                 signal_type = "CALL 🟢"
                 send_signal = True
-            elif macd_line < macd_signal:
+            elif p <= (chart_low * 1.005):
                 signal_type = "PUT 🔴"
                 send_signal = True
 
             if send_signal:
+                # فلتر حظر الإشارة العكسية لمدة 45 دقيقة لمنع التشتيت
+                if t in last_signal_times:
+                    if current_time_now - last_signal_times[t] < 2700: 
+                        continue 
+
                 if last_signals.get(t) != signal_type:
                     
-                    # اختيار المستويات الفنية بناءً على نوع الإشارة
-                    if signal_type == "CALL 🟢":
-                        target = target_call
-                        stop_loss = stop_call
-                    else:
-                        target = target_put
-                        stop_loss = stop_put
-                    
-                    # الفرز الثلاثي بناءً على السيولة
-                    if vol_ratio >= 1.5 and ((signal_type == "CALL 🟢" and spy_status == "BULLISH") or (signal_type == "PUT 🔴" and spy_status == "BEARISH")):
-                        confidence = "عــالــيــة جــداً 🟩"
+                    # فرز الدرجات
+                    if vol_ratio >= 1.5 and ((signal_type == "CALL 🟢" and rsi_v > 55 and p > ema9_v) or (signal_type == "PUT 🔴" and rsi_v < 45 and p < ema9_v)):
+                        confidence = "عــالــيــة جــداً (النخبة) 🟩"
                         tag = "💎 [دخول كاش الحيتان SMC]"
-                        analysis = "توافق كامل ومثالي! سيولة حيتان قوية متدفقة لايف، واتجاه السوق العام يدعم الحركة تماماً."
-                    elif vol_ratio >= 1.1:
-                        confidence = "متوسطة 🟨"
-                        tag = "⚡️ [حركة مضاربية سريعة]"
-                        analysis = "زخم فني جيد متوفر على السهم حالياً، والسيولة تعتبر ضمن المعدل الطبيعي الآمن."
+                        analysis = f"تطابق كامل للمواصفات! السيولة ضخمة جداً ({vol_ratio}x) والاختراق مؤكد بزخم فني حاد."
+                    elif vol_ratio >= 1.0:
+                        confidence = "متوسطة (مضاربية سريعة) 🟨"
+                        tag = "⚡️ [اختراق زخم لحظي]"
+                        analysis = f"السهم يتحرك عند أطراف الشارت مع سيولة مقبولة ({vol_ratio}x). الحركة مناسبة للمضاربة السريعة."
                     else:
-                        confidence = "ضعيفة 🟥"
-                        tag = "⚠️ [تنبيه مخاطرة]"
-                        analysis = "السيولة اللحظية ميتة أو ضعيفة جداً، والدخول في هذه المنطقة يعتبر عالي المخاطرة."
+                        confidence = "ضعيفة (مخاطرة عالية) 🟥"
+                        tag = "⚠️ [تنبيه سلوك سعري]"
+                        analysis = f"السعر عند أطراف الشارت لكن السيولة ضعيفة ({vol_ratio}x). قد يكون الاختراق وهمياً، احذر من الدخول المتأخر!"
+
+                    # 🎯 التعديل الذهبي: تحديد منطقة الدخول الآمنة والأهداف الفنية
+                    if signal_type == "CALL 🟢":
+                        entry_zone = f"${chart_high} إلى ${round(chart_high * 1.003, 2)}" # حول القمة المخترقة بالظبط
+                        target = round(chart_high * 1.02, 2) # المقاومة التالية
+                        stop_loss = chart_low # الدعم الرئيسي (القاع)
+                    else:
+                        entry_zone = f"${chart_low} إلى ${round(chart_low * 0.997, 2)}" # حول القاع المكسور بالظبط
+                        target = round(chart_low * 0.98, 2) # الدعم التالي
+                        stop_loss = chart_high # المقاومة الرئيسية (القمة)
 
                     msg = (
-                        f"{tag} **رادار عبدالرحمن لمستويات الشارت الحية**\n\n"
-                        f"🎯 **نسبة النجاح المتوقعة:** {confidence}\n"
+                        f"{tag} **رادار عبدالرحمن الشامل لمستويات الشارت**\n\n"
+                        f"🎯 **درجة قوة الصفقة:** {confidence}\n"
                         f"📌 **السهم المستهدف:** {t}\n"
                         f"📈 **إشارة الأوبشن:** {signal_type}\n"
                         f"💰 **السعر الحالي لايف:** ${p}\n"
                         f"----------------------------------\n"
-                        f"🔍 **تحليل السيولة والميزان:**\n{analysis}\n\n"
-                        f"📊 **معدل تدفق الكاش الحالي:** {vol_ratio}x\n"
-                        f"🎯 **الهدف الفني (مقاومة الشارت):** ${target}\n"
-                        f"🛑 **وقف الخسارة الفني (دعم الشارت):** ${stop_loss}\n"
-                        f"📉 **حالة السوق العام SPY:** {spy_status}\n"
+                        f"🚪 **منطقة الدخول الآمنة 🔑:** {entry_zone}\n"
+                        f"⚠️ *(إذا السعر الحالي أبعد وأغلى من المنطقة، انتظر ريتست ولا تلحق السهم)*\n"
+                        f"----------------------------------\n"
+                        f"🔍 **التحليل الفني والسيولة:**\n{analysis}\n\n"
+                        f"📊 **معدل تدفق الكاش:** {vol_ratio}x\n"
+                        f"🧭 **مؤشر القوة RSI:** {rsi_v}\n"
+                        f"🎯 **الهدف الفني (المقاومة/الدعم):** ${target}\n"
+                        f"🛑 **وقف الخسارة الفني (الدعم/المقاومة):** ${stop_loss}\n"
                         f"----------------------------------"
                     )
                     bot.send_message(CHAT_ID, msg)
                     last_signals[t] = signal_type
+                    last_signal_times[t] = current_time_now
                     time.sleep(2)
         except:
             continue
 
 def main():
     try:
-        bot.send_message(CHAT_ID, "🚀 تم تفعيل رادار الشارت والمستويات الفنية!\n- تم إلغاء النسب المئوية الثابتة.\n- الأهداف والوقف الحين مأخوذة من أعلى قمة وأقل قاع حركي للسهم على شارت اليوم.")
+        bot.send_message(CHAT_ID, "🦅 تم تحديث الرادار النهائي بنجاح!\n- تم إضافة سطر 'منطقة الدخول الآمنة' لحمايتك من الدخول العشوائي بأسعار غالية.")
     except Exception as e:
         print(e)
 
