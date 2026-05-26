@@ -6,9 +6,9 @@ import pandas_ta as ta
 from flask import Flask
 from threading import Thread
 import os
-from datetime import datetime, timedelta, timezone  # أضفنا timezone هنا للحل النهائي
+from datetime import datetime, timedelta, timezone
 
-# --- منظومة عبادي المتكاملة للتداول المباشر والإحصاء المسائي ---
+# --- منظومة عبادي المتكاملة للتداول المباشر والإحصاء المسائي (النسخة المفتوحة بالكامل) ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
 bot = telebot.TeleBot(TOKEN)
@@ -30,7 +30,6 @@ WATCHLIST = [
 trade_counter = 0
 active_signals = {}
 
-# --- عدادات كشف الحساب اليومي (إحصائيات عبادي) ---
 daily_stats = {
     'success_total': 0,
     'failed_total': 0,
@@ -131,7 +130,6 @@ def build_message_text(trade_id, ticker, signal_type, current_price, vol_ratio, 
     return msg
 
 def send_daily_report():
-    """حساب وإرسال تقرير الأداء اليومي تلقائياً الساعة 12 بالليل"""
     global daily_stats
     total = daily_stats['success_total'] + daily_stats['failed_total']
     win_rate = round((daily_stats['success_total'] / total) * 100, 1) if total > 0 else 0
@@ -155,16 +153,14 @@ def send_daily_report():
     )
     try:
         bot.send_message(CHAT_ID, report, parse_mode='Markdown')
-        # تصفير العدادات بالكامل لاستقبال اليوم التالي
         for key in daily_stats:
             if isinstance(daily_stats[key], bool): daily_stats[key] = False
             else: daily_stats[key] = 0
     except Exception as e: print(f"Error sending report: {e}")
 
 def check_report_timing():
-    """تعديل ذكي لحساب توقيت السعودية بالطريقة الجديدة لتجنب تنبيه بايثون"""
     global daily_stats
-    now = datetime.now(timezone.utc) + timedelta(hours=3) # الحل الصافي هنا
+    now = datetime.now(timezone.utc) + timedelta(hours=3)
     if now.hour == 0 and not daily_stats['report_sent_today']:
         daily_stats['report_sent_today'] = True
         send_daily_report()
@@ -308,8 +304,7 @@ def scan_market():
 
             else:
                 if current_signal_type:
-                    if len(active_signals) >= 3: continue
-                    
+                    # تم حذف سطر الحد الأقصى (if len(active_signals) >= 3) لفتح المجال بالكامل
                     trade_counter += 1
                     if current_signal_type == "CALL 🟢":
                         msg = build_message_text(trade_counter, t, current_signal_type, p, vol_ratio, adx_value, score, t1_c, t2_c, t3_c, sl_fast_c, news_headlines)
@@ -323,7 +318,7 @@ def scan_market():
         except: continue
 
 def main():
-    try: bot.send_message(CHAT_ID, "🦅 **تم تحديث رادار عبادي للنسخة الصافية والمستدامة!**\n\n• تم إصلاح اللوج وإخفاء تنبيهات الوقت.\n• التقرير المسائي المنسق يعمل بدقة الساعة 12 منتصف الليل.\n\nالمنظومة كاملة ومثالية الحين وبانتظار جلسة السوق القادمة! 🎯🔥", parse_mode='Markdown')
+    try: bot.send_message(CHAT_ID, "🦅 **تم إطلاق رادار عبادي (النسخة المفتوحة والكاملة)!**\n\n• تم إلغاء حد الـ 3 صفقات، الرادار الحين يصطاد كل الفرص بدون قيود.\n• كشف الحساب اليومي يعمل بدقة الساعة 12 منتصف الليل.\n\nحدث ملفك في سيرفر Render واستعد للفرص كاملة! 🎯🔥", parse_mode='Markdown')
     except Exception as e: print(e)
     while True:
         scan_market()
