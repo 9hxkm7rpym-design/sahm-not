@@ -6,7 +6,7 @@ import pandas_ta as ta
 from flask import Flask
 from threading import Thread
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  # أضفنا timezone هنا للحل النهائي
 
 # --- منظومة عبادي المتكاملة للتداول المباشر والإحصاء المسائي ---
 TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
@@ -162,19 +162,19 @@ def send_daily_report():
     except Exception as e: print(f"Error sending report: {e}")
 
 def check_report_timing():
-    """دالة تراقب الساعة بالثانية لإرسال التقرير الساعة 12 منتصف الليل بتوقيت السعودية"""
+    """تعديل ذكي لحساب توقيت السعودية بالطريقة الجديدة لتجنب تنبيه بايثون"""
     global daily_stats
-    now = datetime.utcnow() + timedelta(hours=3) # التحويل لتوقيت السعودية المحلي
+    now = datetime.now(timezone.utc) + timedelta(hours=3) # الحل الصافي هنا
     if now.hour == 0 and not daily_stats['report_sent_today']:
         daily_stats['report_sent_today'] = True
         send_daily_report()
     elif now.hour == 1:
-        daily_stats['report_sent_today'] = False # إعادة السماح لليوم القادم
+        daily_stats['report_sent_today'] = False
 
 def scan_market():
     global active_signals, trade_counter, daily_stats
     
-    check_report_timing() # فحص توقيت التقرير المسائي أولاً
+    check_report_timing()
     
     for t in WATCHLIST:
         try:
@@ -261,7 +261,6 @@ def scan_market():
                         msg = build_message_text(tid, t, saved_trade['type'], p, vol_ratio, adx_value, ts_score, saved_trade['t1'], saved_trade['t2'], saved_trade['t3'], saved_trade['sl'], news_headlines, f"👑 **[ الصفقة رقم #{tid} قفلت كل الأهداف بنجاح 💎 ]**")
                         try: bot.edit_message_text(msg, CHAT_ID, saved_trade['message_id'], parse_mode='Markdown')
                         except: pass
-                        # تسجيل النجاح في الإحصائيات المسائية
                         daily_stats['success_total'] += 1
                         if ts_score == 4: daily_stats['elite_success'] += 1
                         elif ts_score == 3: daily_stats['mid_success'] += 1
@@ -271,7 +270,6 @@ def scan_market():
                         msg = build_message_text(tid, t, saved_trade['type'], p, vol_ratio, adx_value, ts_score, saved_trade['t1'], saved_trade['t2'], saved_trade['t3'], saved_trade['sl'], news_headlines, f"🛑 **[ الصفقة رقم #{tid} ضربت الوقف وحمت المحفظة 🧨 ]**")
                         try: bot.edit_message_text(msg, CHAT_ID, saved_trade['message_id'], parse_mode='Markdown')
                         except: pass
-                        # تسجيل الخسارة في الإحصائيات المسائية
                         daily_stats['failed_total'] += 1
                         if ts_score == 4: daily_stats['elite_failed'] += 1
                         elif ts_score == 3: daily_stats['mid_failed'] += 1
@@ -325,7 +323,7 @@ def scan_market():
         except: continue
 
 def main():
-    try: bot.send_message(CHAT_ID, "🦅 **تم إطلاق رادار عبادي الحي والمستدام!**\n\n• الصفقات مرقمة ومحدثة لايف.\n• مدمج نظام الأخبار الفورية لكل شركة.\n• تقييم نقاط الثقة [من 4].\n• 📊 **جديد:** كشف حساب وإحصاء مسائي تلقائي الساعة 12 بالليل!\n\nالمنظومة في وضع الاستعداد بانتظار افتتاح يوم الاثنين المباشر! 🎯🔥", parse_mode='Markdown')
+    try: bot.send_message(CHAT_ID, "🦅 **تم تحديث رادار عبادي للنسخة الصافية والمستدامة!**\n\n• تم إصلاح اللوج وإخفاء تنبيهات الوقت.\n• التقرير المسائي المنسق يعمل بدقة الساعة 12 منتصف الليل.\n\nالمنظومة كاملة ومثالية الحين وبانتظار جلسة السوق القادمة! 🎯🔥", parse_mode='Markdown')
     except Exception as e: print(e)
     while True:
         scan_market()
