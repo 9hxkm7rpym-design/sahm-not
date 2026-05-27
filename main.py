@@ -3,9 +3,9 @@ import time
 import requests
 from datetime import datetime
 
-# --- الإعدادات الأساسية (توكن البوت والـ Chat ID) ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
+# --- تم وضع بياناتك الحقيقية من الصور هنا مباشرة لضمان التشغيل الفوري ---
+TELEGRAM_TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
+CHAT_ID = "1068286006"
 
 # --- قائمة الـ 29 سهم المعتمدة (القديمة + XOM الحلال) ---
 WATCHLIST = [
@@ -59,7 +59,6 @@ def analyze_market_and_send():
             target_1 = entry_price * 1.02
             stop_loss = entry_price * 0.99
             
-            # صياغة الرسالة بـ "خلطة المعلم" المعتمدة (ترقيم وتحديد قوة)
             msg = (
                 f"🚨 *صفقة رقم #{signal_counter}*\n"
                 f"▪️ *السهم:* {ticker} 🌙\n"
@@ -77,7 +76,7 @@ def analyze_market_and_send():
             sent_signals[ticker] = {"signal_id": signal_counter, "status": "Active"}
             
         # --- 2. إرسال الأخبار الفورية المترجمة بالعربي مع السهم ---
-        has_urgent_news = False # يتم ربطه بـ API الأخبار لديك
+        has_urgent_news = False 
         if has_urgent_news:
             raw_news = "Urgent market updates and institutional volume spike."
             arabic_news = translate_and_summarize_news(raw_news)
@@ -97,23 +96,20 @@ def analyze_market_and_send():
             f"حالة محفظتك وتداولاتك في سهم في أمان، نلقاكم الجلسة القادمة بروقان!"
         )
         send_telegram_message(report_msg)
-        report_sent_today = True # قفل الإرسال نهائياً لمنع التكرار ألف مرة
+        report_sent_today = True
 
 if __name__ == "__main__":
     # 🌟 إرسال رسالة التحية الفورية تلقائياً بمجرد تشغيل السيرفر بدون تدخل منك:
     try:
-        # قراءة ملف مؤقت للتأكد أن التحية ترسل أول مرة فقط ولا تتكرر مع الـ Cron-job
         if not os.path.exists("booted.txt"):
             startup_msg = (
                 "🚀 *أبشرك يا عبادي.. وحش \"خلطة المعلم\" اشتغل الحين تلقائياً!*\n"
                 "🎯 الـ 29 سهم تحت المجهر بالملي، والسيستم جاهز لافتتاح السوق وبداية جلب الغنايم بروقان وبدون أي تكرار مزعج!"
             )
             send_telegram_message(startup_msg)
-            # إنشاء ملف صغير ليحفظ حالة التشغيل
             with open("booted.txt", "w") as f:
                 f.write("true")
     except Exception as e:
         print(f"Startup greeting error: {e}")
         
-    # تشغيل الفحص والتحليل الأساسي للسوق تلقائياً
     analyze_market_and_send()
