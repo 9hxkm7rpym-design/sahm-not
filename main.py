@@ -1,13 +1,11 @@
 import os
 import time
 import requests
-from datetime import datetime
-import pytz
+from datetime import datetime, timedelta
 
 # --- بيانات الربط المباشر المعتمدة ---
 TELEGRAM_TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
-SA_TIME = pytz.timezone('Asia/Riyadh')
 
 # --- قائمة الـ 29 سهم المعتمدة ---
 WATCHLIST = [
@@ -31,7 +29,7 @@ def send_telegram_message(text):
         print(f"Error sending message: {e}")
 
 def translate_to_arabic(text):
-    """دالة الترجمة الفورية الحقيقية عبر سيرفرات جوجل مجاناً"""
+    """دالة الترجمة الفورية الحقيقية عبر سيرفرات جوجل"""
     try:
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ar&dt=t&q={requests.utils.quote(text)}"
         response = requests.get(url, timeout=5)
@@ -43,7 +41,6 @@ def translate_to_arabic(text):
         return "صدور أخبار اقتصادية وتدفقات سيولة فورية على السهم."
 
 def get_market_data(ticker):
-    # (هنا تسحب البيانات اللحظية الحية من الـ API حقك)
     return {
         "price": 312.51,
         "vwap": 310.00,
@@ -55,15 +52,17 @@ def get_market_data(ticker):
 def analyze_market_and_send():
     global report_sent_today, last_reset_day, signal_counter
     
-    now_sa = datetime.now(SA_TIME)
+    # 🌟 حساب توقيت السعودية تلقائياً بدون مكتبات خارجية بناءً على توقيت جرينتش UTC+3
+    now_utc = datetime.utcnow()
+    now_sa = now_utc + timedelta(hours=3)
+    
     current_day = now_sa.strftime("%Y-%m-%d")
     current_hour = now_sa.hour
     current_minute = now_sa.minute
     
-    # تحويل الوقت الحالي لرقم عشري لسهولة الحساب
     current_time_float = current_hour + (current_minute / 60.0)
     
-    # 🔄 القفل الحديدي لتصفير العداد يومياً مع بداية تاريخ جديد
+    # 🔄 تصفير العداد يومياً مع بداية تاريخ جديد
     if current_day != last_reset_day:
         signal_counter = 0
         sent_signals.clear()
@@ -76,11 +75,10 @@ def analyze_market_and_send():
         print("💤 السوق مقفل رسمي الحين.. البوت في وضع النوم والراحة.")
         return 
 
-    # --- فحص الأسهم وإرسال الصفقات فقط أثناء الجلسة الرسمية ---
+    # --- فحص الأسهم وإرسال الصفقات ---
     for ticker in WATCHLIST:
         data = get_market_data(ticker)
         
-        # الفلاتر الصارمة لحماية المحفظة (ADX و VWAP)
         is_strong_trend = data["adx"] > 25
         is_legit_volume = (data["direction"] == "CALL" and data["price"] > data["vwap"]) or \
                            (data["direction"] == "PUT" and data["price"] < data["vwap"])
@@ -117,7 +115,7 @@ def analyze_market_and_send():
             )
             send_telegram_message(msg)
 
-    # دالة مراقبة وتحديث الأهداف
+    # دالة مراقبة وتحديد الأهداف
     for ticker, info in list(sent_signals.items()):
         current_data = get_market_data(ticker)
         current_price = current_data["price"]
@@ -135,4 +133,3 @@ def analyze_market_and_send():
 
 if __name__ == "__main__":
     analyze_market_and_send()
-
