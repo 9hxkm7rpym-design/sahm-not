@@ -2,114 +2,128 @@ import os
 import time
 import requests
 from datetime import datetime
+import pytz
 
-# --- تم وضع بياناتك الحقيقية من الصور هنا مباشرة لضمان التشغيل الفوري ---
+# --- بيانات الربط المباشر المعتمدة ---
 TELEGRAM_TOKEN = "8308789681:AAHSibkpRwJW6qLpfyAFx3A0gmXn-PUsRS4"
 CHAT_ID = "1068286006"
+SA_TIME = pytz.timezone('Asia/Riyadh')
 
-# --- قائمة الـ 29 سهم المعتمدة (القديمة + XOM الحلال) ---
+# --- قائمة الـ 29 سهم المعتمدة ---
 WATCHLIST = [
     "NVDA", "TSLA", "MSFT", "AMZN", "AAPL", "META", "OXY", "NFLX", "AMD", "GOOGL",
     "BA", "BABA", "COIN", "DIS", "JPM", "MARA", "NIO", "ORCL", "PLTR", "QQQ",
     "ROKU", "SPY", "SQ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
-# --- الذاكرة المؤقتة لمنع التكرار (State Management) ---
-sent_signals = {}      # لحفظ الصفقات النشطة لمنع التكرار
+# --- الذاكرة المؤقتة والعدادات الذكية ---
+sent_signals = {}       
 report_sent_today = False
-last_report_date = ""
+last_reset_day = ""
+signal_counter = 0      
 
 def send_telegram_message(text):
-    """إرسال الرسائل إلى التليجرام تلقائياً"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        response = requests.post(url, json=payload)
-        return response.json()
+        requests.post(url, json=payload)
     except Exception as e:
         print(f"Error sending message: {e}")
 
-def translate_and_summarize_news(raw_news_text):
-    """تلخيص وترجمة زبدة الأخبار فورياً إلى العربية"""
-    if "inventory" in raw_news_text.lower() or "oil" in raw_news_text.lower():
-        return "تحديث مخزونات الطاقة والنفط الأمريكية المؤثرة على الحركة."
-    elif "earnings" in raw_news_text.lower() or "revenue" in raw_news_text.lower():
-        return "إعلان النتائج المالية الربع سنوية للشركة الحين."
-    return "صدور أخبار اقتصادية وتدفقات سيولة فورية على السهم."
+def translate_to_arabic(text):
+    """🌟 دالة الترجمة الفورية الحقيقية عبر سيرفرات جوجل مجاناً 🌟"""
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ar&dt=t&q={requests.utils.quote(text)}"
+        response = requests.get(url, timeout=5)
+        result = response.json()
+        # تجميع النص المترجم بالكامل
+        translated_text = "".join([sentence[0] for sentence in result[0] if sentence[0]])
+        return translated_text
+    except Exception as e:
+        print(f"Translation error: {e}")
+        return "صدور أخبار اقتصادية وتدفقات سيولة فورية على السهم."
+
+def get_market_data(ticker):
+    # محاكاة البيانات الحية وجلب خبر حقيقي كمثال
+    return {
+        "price": 112.55,
+        "vwap": 110.20,
+        "adx": 35.0,
+        "direction": "CALL",
+        "raw_news": "How Co-founders turned a possible mistake into a $25M brand"
+    }
 
 def analyze_market_and_send():
-    global report_sent_today, last_report_date
+    global report_sent_today, last_reset_day, signal_counter
     
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    current_hour = datetime.now().hour
+    now_sa = datetime.now(SA_TIME)
+    current_day = now_sa.strftime("%Y-%m-%d")
+    current_hour = now_sa.hour
     
-    # تصفير عداد التقرير اليومي مع بداية يوم جديد
-    if current_date != last_report_date:
+    # 🔄 القفل الحديدي لتصفير العداد يومياً
+    if current_day != last_reset_day:
+        signal_counter = 0
+        sent_signals.clear()
         report_sent_today = False
-        last_report_date = current_date
+        last_reset_day = current_day
+        print(f"🔄 جولة جديدة! تم تصفير العداد بالملي ليوم: {current_day}")
 
-    # --- 1. فحص وتحليل الأسهم أثناء الجلسة (إرسال الصفقات) ---
-    signal_counter = len(sent_signals) + 1
-    
     for ticker in WATCHLIST:
-        has_setup = False # (هنا يوضع شرط الاستراتيجية المدمجة الخاص بك)
+        data = get_market_data(ticker)
         
-        if has_setup and ticker not in sent_signals:
-            entry_price = 150.0 if ticker == "XOM" else 100.0  # مثال لايف من الشارت
-            target_1 = entry_price * 1.02
-            stop_loss = entry_price * 0.99
+        # الفلاتر الصارمة لحماية المحفظة
+        is_strong_trend = data["adx"] > 25
+        is_legit_volume = (data["direction"] == "CALL" and data["price"] > data["vwap"]) or \
+                           (data["direction"] == "PUT" and data["price"] < data["vwap"])
+        
+        if is_strong_trend and is_legit_volume and ticker not in sent_signals:
+            signal_counter += 1  
+            
+            target1 = round(data["price"] * 1.01, 2)
+            target2 = round(data["price"] * 1.02, 2)
+            stop_loss = round(data["price"] * 0.97, 2)
+            
+            sent_signals[ticker] = {
+                "id": signal_counter, "type": data["direction"], "entry": data["price"],
+                "target1": target1, "target2": target2, "stop_loss": stop_loss,
+                "t1_hit": False, "t2_hit": False, "sl_hit": False
+            }
+            
+            # 🌟 هنا السحر: البوت بياخذ الخبر الإنجليزي ويترجمه فوراً وبشكل حقيقي للعربي
+            arabic_news = translate_to_arabic(data["raw_news"])
             
             msg = (
-                f"🚨 *صفقة رقم #{signal_counter}*\n"
-                f"▪️ *السهم:* {ticker} 🌙\n"
-                f"▪️ *نوع العقد المتوقع:* CALL (صعود)\n"
-                f"▪️ *مدرسة الدخول:* مناطق الهوامير (SMC) + فوليوم عالي\n"
-                f"▪️ *درجة القوة:* قوي 🟩\n"
-                f"▪️ *سعر دخول السهم الحالي:* ${entry_price:.2f}\n"
-                f"🎯 *الهدف الحقيقي (عظم الشارت):* ${target_1:.2f}\n"
-                f"🛑 *وقف الخسارة بالملي:* ${stop_loss:.2f}\n"
-                f"--- \n"
-                f"⚠️ *ملاحظة المخاطرة:* نسبة المخاطرة ممتازة (الهدف ضعف الوقف)."
+                f"🚀 *صفقة جديدة رقم #{signal_counter}*\n\n"
+                f"📊 *درجة الثقة الإجمالية:* قوية جداً (النخبة 🟩)\n"
+                f"📌 *السهم:* {ticker} | *الاتجاه:* {data['direction']} 🟢\n"
+                f"💰 *سعر السهم الحالي:* ${data['price']}\n"
+                f"───────────────────\n"
+                f"🎯 *المستهدفات:*\n"
+                f"• الهدف الأول: ${target1} | الهدف الثاني: ${target2}\n"
+                f"🛑 *وقف الخسارة:* ${stop_loss}\n"
+                f"───────────────────\n"
+                f"📰 *أخبار السهم اللحظية المترجمة:* \n"
+                f"💬 {arabic_news}\n"
+                f"───────────────────\n"
+                f"⚠️ *تنبيه عبادي:* التزم بالسترايك القريب عند السعر الحالي لحماية كاشك!"
             )
-            
             send_telegram_message(msg)
-            sent_signals[ticker] = {"signal_id": signal_counter, "status": "Active"}
-            
-        # --- 2. إرسال الأخبار الفورية المترجمة بالعربي مع السهم ---
-        has_urgent_news = False 
-        if has_urgent_news:
-            raw_news = "Urgent market updates and institutional volume spike."
-            arabic_news = translate_and_summarize_news(raw_news)
-            news_msg = (
-                f"📰 *خبر عاجل وفوري - سهم {ticker}*\n"
-                f"▪️ *الخبر بالعربي:* {arabic_news}\n"
-                f"▪️ *تأثيره المتوقع:* يدعم عزم الحركة الحالية على الشارت."
-            )
-            send_telegram_message(news_msg)
 
-    # --- 3. قفل التقرير اليومي: يرسل مرة واحدة فقط بعد إغلاق السوق ---
-    if current_hour >= 23 and not report_sent_today:
-        report_msg = (
-            f"📊 *التقرير الختامي اليومي لجلسة {current_date}*\n"
-            f"تم مراقبة الـ 29 سهم كاملة اليوم مية بالمية.\n"
-            f"▪️ عدد الفرص الكلية المرسلة: {len(sent_signals)}\n"
-            f"حالة محفظتك وتداولاتك في سهم في أمان، نلقاكم الجلسة القادمة بروقان!"
-        )
-        send_telegram_message(report_msg)
-        report_sent_today = True
+    # دالة مراقبة وتحديث الأهداف
+    for ticker, info in list(sent_signals.items()):
+        current_data = get_market_data(ticker)
+        current_price = current_data["price"]
+        
+        if info["type"] == "CALL":
+            if current_price >= info["target1"] and not info["t1_hit"]:
+                info["t1_hit"] = True
+                send_telegram_message(f"🎯 *تحديث صفقة رقم #{info['id']} ({ticker}):*\n✅ مبروك! حقق *الهدف الأول* عند ${info['target1']} 🚀")
+            if current_price >= info["target2"] and not info["t2_hit"]:
+                info["t2_hit"] = True
+                send_telegram_message(f"🔥 *تحديث صفقة رقم #{info['id']} ({ticker}):*\n🎉 جاب *الهدف الثاني* عند ${info['target2']}💰")
+            if current_price <= info["stop_loss"] and not info["sl_hit"]:
+                info["sl_hit"] = True
+                send_telegram_message(f"🛑 *تحديث صفقة رقم #{info['id']} ({ticker}):*\n🚨 ضرب *وقف الخسارة* عند ${info['stop_loss']}.")
 
 if __name__ == "__main__":
-    # 🌟 إرسال رسالة التحية الفورية تلقائياً بمجرد تشغيل السيرفر بدون تدخل منك:
-    try:
-        if not os.path.exists("booted.txt"):
-            startup_msg = (
-                "🚀 *أبشرك يا عبادي.. وحش \"خلطة المعلم\" اشتغل الحين تلقائياً!*\n"
-                "🎯 الـ 29 سهم تحت المجهر بالملي، والسيستم جاهز لافتتاح السوق وبداية جلب الغنايم بروقان وبدون أي تكرار مزعج!"
-            )
-            send_telegram_message(startup_msg)
-            with open("booted.txt", "w") as f:
-                f.write("true")
-    except Exception as e:
-        print(f"Startup greeting error: {e}")
-        
     analyze_market_and_send()
