@@ -52,7 +52,7 @@ def get_market_data(ticker):
 def analyze_market_and_send():
     global report_sent_today, last_reset_day, signal_counter
     
-    # 🌟 حساب توقيت السعودية تلقائياً بدون مكتبات خارجية بناءً على توقيت جرينتش UTC+3
+    # حساب توقيت السعودية UTC+3
     now_utc = datetime.utcnow()
     now_sa = now_utc + timedelta(hours=3)
     
@@ -115,7 +115,7 @@ def analyze_market_and_send():
             )
             send_telegram_message(msg)
 
-    # دالة مراقبة وتحديد الأهداف
+    # دالة مراقبة وتحديث الأهداف
     for ticker, info in list(sent_signals.items()):
         current_data = get_market_data(ticker)
         current_price = current_data["price"]
@@ -132,4 +132,15 @@ def analyze_market_and_send():
                 send_telegram_message(f"🛑 *تحديث صفقة رقم #{info['id']} ({ticker}):*\n🚨 ضرب *وقف الخسارة* عند ${info['stop_loss']}.")
 
 if __name__ == "__main__":
+    # 🌟 إرسال رسالة التحية الفورية مباشرة بمجرد تشغيل السيرفر وقبل قفل وقت السوق 🌟
+    try:
+        startup_msg = (
+            "🚀 *أبشرك يا عبادي.. وحش \"خلطة المعلم\" المطور اشتغل الحين بنجاح!*\n"
+            "🎯 الـ 29 سهم تحت المجهر بالملي، والسيستم جاهز ومقفل تماماً بانتظار جرس افتتاح الجلسة الرسمية بروقان وبدون إزعاج!"
+        )
+        send_telegram_message(startup_msg)
+        print("✅ تم إرسال رسالة الترحيب التأكيدية بنجاح للتليجرام.")
+    except Exception as e:
+        print(f"Startup greeting error: {e}")
+        
     analyze_market_and_send()
