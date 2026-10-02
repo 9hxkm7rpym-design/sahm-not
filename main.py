@@ -25,6 +25,10 @@ signal_counter = 0
 report_sent_today = False
 last_reset_day = ""
 
+# --- قوائم جديدة لتسجيل أسماء الشركات في التقرير اليومي ---
+successful_tickers = []
+failed_tickers = []
+
 class SimpleServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -98,7 +102,7 @@ def calculate_time_target(change_val, now_sa):
     return duration_text, expected_date
 
 def analyze_market_and_send():
-    global report_sent_today, last_reset_day, signal_counter, success_count, failed_count
+    global report_sent_today, last_reset_day, signal_counter, success_count, failed_count, successful_tickers, failed_tickers
     
     while True:
         now_sa = datetime.utcnow() + timedelta(hours=3)
@@ -110,6 +114,8 @@ def analyze_market_and_send():
             signal_counter = 0
             success_count = 0
             failed_count = 0
+            successful_tickers.clear()
+            failed_tickers.clear()
             sent_signals.clear()
             active_trades.clear()
             report_sent_today = False
@@ -134,12 +140,14 @@ def analyze_market_and_send():
                 if trade["type"] == "CALL":
                     if live_price >= trade["target1"]:
                         success_count += 1
+                        successful_tickers.append(f"{ticker} (CALL 🟢)")
                         msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ *صفقة رقم:* #{trade['id']} (CALL) 🟢\n▪ *سعر الدخول:* ${trade['entry']}\n🔥 *السعر الحالي:* ${live_price}\n💰 جني أرباح فوري في محفظتك!"
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
                     elif live_price <= trade["stop_loss"]:
                         failed_count += 1
-                        msg = f"🛑 *تنبيه الوقف - سهم {ticker}*\n▪ *صفقة رقم:* #{trade['id']} (CALL) 🟢\n⚠️ ضرب وقف الخسارة (${trade['stop_loss']}) لتأمين كاشك."
+                        failed_tickers.append(f"{ticker} (CALL 🟢)")
+                        msg = f"🛑 *تنبيه الوقف - سهم {ticker}*\n▪ *صفقة رقم:* #{trade['id']} (CALL) 🟢\n⚠️️ ضرب وقف الخسارة (${trade['stop_loss']}) لتأمين كاشك."
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
                         
@@ -147,11 +155,13 @@ def analyze_market_and_send():
                 elif trade["type"] == "PUT":
                     if live_price <= trade["target1"]:
                         success_count += 1
+                        successful_tickers.append(f"{ticker} (PUT 🔴)")
                         msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ *صفقة رقم:* #{trade['id']} (PUT) 🔴\n▪ *سعر الدخول:* ${trade['entry']}\n🔥 *السعر الحالي المنهار:* ${live_price}\n💰 نقش الغنايم وأرباح الـ PUT يا عبادي!"
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
                     elif live_price >= trade["stop_loss"]:
                         failed_count += 1
+                        failed_tickers.append(f"{ticker} (PUT 🔴)")
                         msg = f"🛑 *تنبيه الوقف - سهم {ticker}*\n▪ *صفقة رقم:* #{trade['id']} (PUT) 🔴\n⚠️ ضرب وقف الخسارة (${trade['stop_loss']}) لسلامة المحفظة الحين."
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
@@ -205,7 +215,6 @@ def analyze_market_and_send():
                 elif change_val < -1.5:
                     signal_counter += 1
                     confidence_level = "انهيار قوي (النخبة 🟥)" if change_val < -3.0 else "تأكيد هبوط (درجة ممتازة 🟪)"
-                    # حساب أهداف الـ PUT تحت السعر الحالي، والوقف فوقه
                     target1 = round(entry_price * 0.99, 2)
                     target2 = round(entry_price * 0.98, 2)
                     stop_loss = round(entry_price * 1.03, 2)
@@ -238,14 +247,21 @@ def analyze_market_and_send():
                     time.sleep(2)
 
         if now_sa.hour >= 23 and not report_sent_today:
-            running_now = len(active_trades)
+            # تجهيز أسماء الصفقات الناجحة
+            success_list_str = ", ".join(successful_tickers) if successful_tickers else "لا توجد"
+            # تجهيز أسماء الصفقات الخاسرة
+            failed_list_str = ", ".join(failed_tickers) if failed_tickers else "لا توجد"
+            # تجهيز أسماء الصفقات المستمرة حالياً
+            running_tickers = [f"{t} ({info['type']})" for t, info in active_trades.items()]
+            running_list_str = ", ".join(running_tickers) if running_tickers else "لا توجد"
+
             report_msg = (
                 f"📊 *التقرير الختامي اليومي لرادار عبادي لجلسة {current_day}*\n\n"
                 f"🎯 *حصاد الصيدات والنتائج اليومية (CALL & PUT):*\n"
-                f"▪️ إجمالي الفرص المرسلة كاملة: {signal_counter}\n"
-                f"✅ عدد الصفقات الناجحة: {success_count} 🔥\n"
-                f"🛑 عدد الصفقات الخاسرة: {failed_count}\n"
-                f"⏳ صفقات مستمرة للجلسة القادمة: {running_now}\n"
+                f"▪️️ إجمالي الفرص المرسلة كاملة: {signal_counter}\n\n"
+                f"✅ *الناجحة ({success_count}):*\n{success_list_str}\n\n"
+                f"🛑 *الخاسرة ({failed_count}):*\n{failed_list_str}\n\n"
+                f"⏳ *المستمرة للجلسة القادمة ({len(active_trades)}):*\n{running_list_str}\n"
                 f"───────────────────\n"
                 f"حالة محفظتك وتداولاتك في أمان يا بطل! 🦅🔥"
             )
