@@ -1,11 +1,27 @@
+import os
 import time
 import requests
 import yfinance as yf
 from datetime import datetime
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ==================== إعدادات تليجرام ====================
 TELEGRAM_BOT_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 TELEGRAM_CHAT_ID = "1068286006"
+
+# ==================== سيرفر ويب لتجنب مشاكل رندر ====================
+class SimpleServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Radar Club Pro Bot is Active & Running!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleServer)
+    server.serve_forever()
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -15,7 +31,7 @@ def send_telegram_message(message):
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=5)
         return response.json()
     except Exception as e:
         print(f"خطأ في إرسال رسالة تليجرام: {e}")
@@ -27,60 +43,99 @@ WATCHLIST = [
     "UBER", "ROKU", "SHOP", "BABA", "XOM", "JPM", "BAC", "PFE", "SPY"
 ]
 
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.iloc[-1]
+
 def check_market_momentum():
-    print("🚀 جاري فحص السوق والأسهم بناءً على محرك الزخم الحقيقي ونطاقات الدخول الذكية...")
+    print("🚀 جاري فحص السوق بأدق معايير التحليل الفني (RSI + الفوليوم العالي)...")
     
     for symbol in WATCHLIST:
         try:
-            stock = yf.Ticker(symbol)
-            df = stock.history(period="2d", interval="1h")
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
             
-            if df.empty or len(df) < 2:
+            stock = yf.Ticker(symbol, session=session)
+            df = stock.history(period="5d", interval="1h")
+            
+            if df.empty or len(df) < 20:
                 continue
                 
-            current_price = df['Close'].iloc[-1]
-            prev_close = df['Close'].iloc[-2]
+            current_price = float(df['Close'].iloc[-1])
+            prev_close = float(df['Close'].iloc[-2])
             price_change = ((current_price - prev_close) / prev_close) * 100
             
-            current_volume = df['Volume'].iloc[-1]
-            avg_volume = df['Volume'].mean()
-
-            # شرط الزخم المزدوج العادل (تغير مئوي + حجم تداول نشط)
-            if price_change >= 1.5 and current_volume > (avg_volume * 0.8):
+            current_volume = float(df['Volume'].iloc[-1])
+            avg_volume = float(df['Volume'].mean())
+            
+            # حساب مؤشر القوة النسبية RSI لدقة أعلى
+            rsi_value = calculate_rsi(df['Close'])
+            
+            # فلترة ذكية لصفقات الـ CALL (عزم صعودي مؤكد بنسبة نجاح عالية)
+            if price_change >= 1.2 and current_volume > (avg_volume * 1.2) and 45 <= rsi_value <= 70:
                 
-                # حساب منطقة الدخول الذكية والأهداف وهامش الأمان
                 entry_low = round(current_price * 0.998, 2)
                 entry_high = round(current_price * 1.002, 2)
-                target_1 = round(current_price * 1.02, 2)
-                target_2 = round(current_price * 1.04, 2)
-                stop_loss = round(current_price * 0.985, 2)
+                target_1 = round(current_price * 1.025, 2)
+                target_2 = round(current_price * 1.05, 2)
+                stop_loss = round(current_price * 0.982, 2)
                 
-                direction = "CALL 🟢" if price_change > 0 else "PUT 🔴"
-                
-                # صياغة رسالة تليجرام الواضحة والمرتبة
                 message = (
-                    f"🔔 *تنبيه صفقة أوبشن جديدة* 🚀\n\n"
-                    f"📌 *الرمز (Ticker):* `{symbol}`\n"
-                    f"📈 *نوع الصفقة:* `{direction}`\n"
-                    f"💵 *السعر الحالي:* `${current_price:.2f}`\n\n"
-                    f"🎯 *منطقة الدخول الآمنة (Entry Zone):*\n"
-                    f"`${entry_low} - ${entry_high}` *(ادخل بهذا النطاق)*\n\n"
-                    f"📊 *الأهداف ووقف الخسارة:*\n"
+                    f"🔥 *صفقة أوبشن (CALL) عالية النقاء* 🟢\n\n"
+                    f"📌 *الرمز:* `{symbol}`\n"
+                    f"💵 *السعر الحالي:* `${current_price:.2f}`\n"
+                    f"📊 *مؤشر RSI:* `{rsi_value:.1f}` *(زخم صاعد صحي)*\n\n"
+                    f"🎯 *منطقة الدخول الذكية:* \n`${entry_low} - ${entry_high}`\n\n"
+                    f"📈 *الأهداف المرصودة:*\n"
                     f"• *الهدف الأول:* `${target_1}` 🟢\n"
-                    f"• *الهدف الثاني:* `${target_2}` 🎯\n"
-                    f"• *وقف الخسارة:* `${stop_loss}` 🛑\n\n"
-                    f"⚡ *نسبة التغير اللحظي:* `+{price_change:.2f}%`"
+                    f"• *الهدف الثاني:* `${target_2}` 🚀\n"
+                    f"🛑 *وقف الخسارة الآمن:* `${stop_loss}`\n\n"
+                    f"⚡ *نسبة التغير وفوليوم السيولة:* `+{price_change:.2f}%`"
                 )
                 
                 send_telegram_message(message)
-                print(f"تم إرسال تنبيه للصفقة: {symbol}")
+                print(f"تم إرسال صفقة CALL قوية للسهم: {symbol}")
+
+            # فلترة ذكية لصفقات الـ PUT (انهيار وتأكيد بيعي قوي)
+            elif price_change <= -1.2 and current_volume > (avg_volume * 1.2) and 30 <= rsi_value <= 55:
                 
+                entry_low = round(current_price * 0.998, 2)
+                entry_high = round(current_price * 1.002, 2)
+                target_1 = round(current_price * 0.975, 2)
+                target_2 = round(current_price * 0.95, 2)
+                stop_loss = round(current_price * 1.018, 2)
+                
+                message = (
+                    f"🩸 *صفقة أوبشن (PUT) عالية النقاء* 🔴\n\n"
+                    f"📌 *الرمز:* `{symbol}`\n"
+                    f"💵 *السعر الحالي:* `${current_price:.2f}`\n"
+                    f"📊 *مؤشر RSI:* `{rsi_value:.1f}` *(ضغط بيعي وهبوط)*\n\n"
+                    f"🎯 *منطقة الدخول الذكية:* \n`${entry_low} - ${entry_high}`\n\n"
+                    f"📉 *الأهداف الهبوطية المرصودة:*\n"
+                    f"• *الهدف الأول:* `${target_1}` 🔴\n"
+                    f"• *الهدف الثاني:* `${target_2}` 🎯\n"
+                    f"🛑 *وقف الخسارة الآمن:* `${stop_loss}`\n\n"
+                    f"⚡ *نسبة التغير وفوليوم السيولة:* `{price_change:.2f}%`"
+                )
+                
+                send_telegram_message(message)
+                print(f"تم إرسال صفقة PUT قوية للسهم: {symbol}")
+                
+            time.sleep(1)
         except Exception as e:
             print(f"خطأ أثناء معالجة السهم {symbol}: {e}")
 
 if __name__ == "__main__":
-    print("🤖 البوت يعمل الآن في الخلفية...")
+    server_thread = threading.Thread(target=run_web_server, daemon=True)
+    server_thread.start()
+    
+    print("🤖 رادار صفقات الأوبشن الاحترافي يعمل الآن...")
     while True:
-        # فحص السوق كل 5 دقائق
         check_market_momentum()
         time.sleep(300)
