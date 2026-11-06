@@ -35,7 +35,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Radar Club Master Pro Bot Is Running!")
+        self.wfile.write(b"Radar Club Master Pro 4-Grades Bot Is Running!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -191,7 +191,7 @@ def analyze_market_and_send():
                         send_telegram_message(f"🛑 *ضرب وقف الخسارة - سهم {ticker}*\n▪ صفقة رقم #{trade['id']} (PUT) 🔴")
                         active_trades.pop(ticker)
 
-        # --- مسح السوق وتصنيف الصفقات مع الشرح الرياضي ---
+        # --- مسح السوق وتصنيف الصفقات مع الـ 4 درجات والشرح ---
         for ticker in WATCHLIST:
             if ticker in active_trades or ticker in sent_signals:
                 continue
@@ -225,6 +225,11 @@ def analyze_market_and_send():
                     grade = "الدرجة الثالثة (المضاربي اللحظي ⭐)"
                     signal_type = "CALL" if change_val > 0 else "PUT"
 
+                # 🚀 4. الدرجة الرابعة الجديدة: الفرصة المبكرة (✨) - لزيادة حيوية الصفقات
+                elif abs(change_val) >= 0.4 and vol_ratio >= 1.01:
+                    grade = "الدرجة الرابعة (الفرصة المبكرة والتقاط السيولة ✨)"
+                    signal_type = "CALL" if change_val > 0 else "PUT"
+
                 if grade and signal_type:
                     signal_counter += 1
                     
@@ -253,8 +258,8 @@ def analyze_market_and_send():
                     
                     explanation_text = (
                         f"• ⚡ *نسبة التغير ({change_val}%):* حُسبت بقانون (السعر الحالي ${entry_price} - إغلاق أمس ${prev_close}) ÷ إغلاق أمس × 100 على فريم الساعة.\n"
-                        f"• 🌊 *حجم السيولة ({int(volume):,} مقابل متوسط {int(avg_vol):,}):* حُسبت بمقارنة حجم التداول الحالي بمتوسط آخر 5 أيام ووجدنا أنه يمثل ({round(vol_ratio, 1)}x) من المعتاد.\n"
-                        f"• 📊 *مؤشر القوة (RSI: {rsi}):* حُسب بمتوسط سرعة الصعود والهبوط لآخر 14 شمعة على فريم الساعة."
+                        f"• 🌊 *حجم السيولة ({int(volume):,} مقابل متوسط {int(avg_vol):,}):* حُسبت بمقارنة حجم التداول الحالي بمتوسط آخر 5 أيام ({round(vol_ratio, 1)}x).\n"
+                        f"• 📊 *مؤشر القوة (RSI: {rsi}):* حُسب بمتوسط سرعة الصعود والهبوط لآخر 14 شمعة."
                     )
 
                     msg = (
@@ -296,5 +301,5 @@ def analyze_market_and_send():
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     threading.Thread(target=check_telegram_updates, daemon=True).start()
-    send_telegram_message("🦅 *رادار عبادي يعمل الآن بكامل طاقته (الدرجات + الشرح التعليمي + فريم الساعة)!*")
+    send_telegram_message("🦅 *رادار عبادي (بالـ 4 درجات والشرح التكتيكي) جاهز للعمل!*")
     analyze_market_and_send()
