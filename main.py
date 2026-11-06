@@ -4,8 +4,8 @@ import yfinance as yf
 from datetime import datetime
 
 # ==================== إعدادات تليجرام ====================
-TELEGRAM_BOT_TOKEN = "ضع_التوكن_هنا"
-TELEGRAM_CHAT_ID = "ضع_الروم_اي دي_هنا"
+TELEGRAM_BOT_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
+TELEGRAM_CHAT_ID = "1068286006"
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
