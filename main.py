@@ -1,23 +1,31 @@
 import os
 import time
+import json
 import requests
+import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# ==================== إعدادات تليجرام ====================
+# ==========================================
+# 📊 إعدادات الرادار الثلاثي الخارق (1H + 15m + 5m)
+# ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
 
-# ==================== قائمة الـ 29 سهم المعتمدة ====================
 WATCHLIST = [
     "NVDA", "TSLA", "MSFT", "AMZN", "AAPL", "META", "OXY", "NFLX", "AMD", "GOOGL",
     "BA", "BABA", "COIN", "DIS", "JPM", "MARA", "NIO", "ORCL", "PLTR", "QQQ",
     "ROKU", "SPY", "SQ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
-# ==================== الذاكرة المؤقتة وإحصائيات الأرباح ====================
+VOL_RATIO_MIN = 1.2
+RR_RATIO = 1.5  # نسبة الربح إلى الخطر
+
+STATE_FILE = "active_trades_state.json"
+
+# الذاكرة المؤقتة وإحصائيات الأرباح
 active_trades = {}      
 sent_signals = set()    
 success_count = 0       
@@ -25,116 +33,94 @@ failed_count = 0
 signal_counter = 0      
 report_sent_today = False
 last_reset_day = ""
+last_market_trend_msg = ""
 
 successful_tickers = []
 failed_tickers = []
 
-# ==================== سيرفر ويب لتجنب مشاكل رندر ====================
 class SimpleServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Radar Club Master Pro 4-Grades Bot Is Running!")
+        self.wfile.write(b"Radar Club Triple Timeframe Active!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), SimpleServer)
     server.serve_forever()
 
-def send_telegram_message(text, reply_markup=None):
+def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
     try:
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Error sending message: {e}")
 
-def answer_callback_query(callback_query_id, text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery"
-    payload = {"callback_query_id": callback_query_id, "text": text, "show_alert": True}
+# --- نظام حفظ واستعادة الصفقات النشطة (حماية ضد الـ Restart) ---
+def save_state():
     try:
-        requests.post(url, json=payload, timeout=5)
+        with open(STATE_FILE, "w") as f:
+            json.dump(active_trades, f)
     except Exception as e:
-        print(f"Error answering callback: {e}")
+        print(f"Error saving state: {e}")
 
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.iloc[-1]
-
-def get_market_data(ticker):
-    try:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
-        
-        # الاعتماد على فريم الساعة (1h) لتحليل صفقات اليوم الواحد
-        stock = yf.Ticker(ticker, session=session)
-        df = stock.history(period="5d", interval="1h")
-        
-        if df.empty or len(df) < 20:
-            return {"success": False}
-            
-        current_price = float(df['Close'].iloc[-1])
-        previous_close = float(df['Close'].iloc[-2])
-        change_percent = ((current_price - previous_close) / previous_close) * 100
-        
-        current_volume = float(df['Volume'].iloc[-1])
-        avg_volume = float(df['Volume'].mean())
-        rsi_value = calculate_rsi(df['Close'])
-        
-        return {
-            "success": True,
-            "price": round(current_price, 2),
-            "prev_close": round(previous_close, 2),
-            "change": round(change_percent, 2),
-            "volume": current_volume,
-            "avg_volume": round(avg_volume, 0),
-            "rsi": round(rsi_value, 1)
-        }
-    except Exception as e:
-        return {"success": False}
-
-def check_telegram_updates():
-    offset = 0
-    while True:
+def load_state():
+    global active_trades
+    if os.path.exists(STATE_FILE):
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={offset}&timeout=30"
-            response = requests.get(url, timeout=35)
-            if response.status_code == 200:
-                data = response.json()
-                for result in data.get("result", []):
-                    offset = result["update_id"] + 1
-                    
-                    if "callback_query" in result:
-                        query = result["callback_query"]
-                        query_id = query["id"]
-                        data_str = query["data"]
-                        
-                        if data_str.startswith("update_"):
-                            ticker = data_str.split("_")[1]
-                            market = get_market_data(ticker)
-                            if market.get("success"):
-                                price = market["price"]
-                                change = market["change"]
-                                rsi = market["rsi"]
-                                msg = f"📌 السهم: {ticker}\n💵 السعر الحالي: ${price}\n⚡ التغير: {change}%\n📊 RSI: {rsi}"
-                                answer_callback_query(query_id, msg)
-                            else:
-                                answer_callback_query(query_id, f"تعذر جلب سعر {ticker} حالياً.")
+            with open(STATE_FILE, "r") as f:
+                active_trades = json.load(f)
         except Exception as e:
-            print(f"Error in telegram updates: {e}")
-        time.sleep(1)
+            print(f"Error loading state: {e}")
+
+def fetch_multi_timeframe_data(ticker):
+    try:
+        # جلب البيانات للفريمات الثلاثة
+        df_1h = yf.download(ticker, period="3d", interval="1h", progress=False)
+        df_15m = yf.download(ticker, period="2d", interval="15m", progress=False)
+        df_5m = yf.download(ticker, period="1d", interval="5m", progress=False)
+        
+        if df_1h.empty or df_15m.empty or df_5m.empty:
+            return None, None, None
+            
+        return df_1h, df_15m, df_5m
+    except Exception as e:
+        return None, None, None
+
+def get_live_price(ticker):
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=5)
+        data = response.json()
+        current_price = data['chart']['result'][0]['meta']['regularMarketPrice']
+        return round(current_price, 2)
+    except Exception as e:
+        return None
+
+# --- فحص اتجاه السوق العام (SPY) وإرسال تنبيه توجيهي ---
+def check_market_trend():
+    global last_market_trend_msg
+    try:
+        df = yf.download("SPY", period="2d", interval="1h", progress=False)
+        if not df.empty and len(df) >= 2:
+            close_p = df.iloc[-1]['Close']
+            open_p = df.iloc[-1]['Open']
+            trend = "صاعد إيجابي 🟢" if close_p > open_p else "هابط سلبي 🔴"
+            
+            trend_text = f"🌍 *نبض اتجاه السوق العام (SPY):* الاتجاه الحالي `{trend}` (سعر SPY: {round(close_p, 2)}$)"
+            if trend_text != last_market_trend_msg:
+                send_telegram_message(trend_text)
+                last_market_trend_msg = trend_text
+    except Exception as e:
+        print(f"Trend check error: {e}")
 
 def analyze_market_and_send():
     global report_sent_today, last_reset_day, signal_counter, success_count, failed_count, successful_tickers, failed_tickers
+    
+    load_state() # استعادة الصفقات عند التشغيل
     
     while True:
         now_sa = datetime.utcnow() + timedelta(hours=3)
@@ -150,148 +136,170 @@ def analyze_market_and_send():
             failed_tickers.clear()
             sent_signals.clear()
             active_trades.clear()
+            if os.path.exists(STATE_FILE):
+                os.remove(STATE_FILE)
             report_sent_today = False
             last_reset_day = current_day
 
         if current_weekday == 5 or current_weekday == 6:
+            print(f"💤 الويكند بدأ.. الرادار مريح يا عبادي.")
             time.sleep(3600)
             continue
 
-        if current_time_float < 16.5 or current_time_float > 23.0:
+        # --- التوقيت الشتوي: السوق يفتح 5:30 مساءً (17.5) وينتهي 12 منتصف الليل (24.0) ---
+        if current_time_float < 17.5 or current_time_float > 24.0:
             time.sleep(60)
             continue
 
-        # --- مراقبة صفقات الـ CALL والـ PUT لايف طوال جلسة اليوم ---
+        # تحديث اتجاه السوق العام دورياً أثناء فتح السوق
+        check_market_trend()
+
+        # --- 1. تتبع الصفقات المفتوحة لايف (CALL & PUT) ---
+        state_changed = False
         for ticker, trade in list(active_trades.items()):
-            market = get_market_data(ticker)
-            if market.get("success"):
-                live_price = market["price"]
-                
+            live_price = get_live_price(ticker)
+            if live_price:
                 if trade["type"] == "CALL":
-                    if live_price >= trade["target1"]:
+                    if live_price >= trade["target"]:
                         success_count += 1
                         successful_tickers.append(f"{ticker} (CALL 🟢)")
-                        send_telegram_message(f"🎯 *هدف محقق بامتياز! سهم {ticker}*\n▪ صفقة رقم #{trade['id']} (CALL) 🟢\n▪ السعر الحالي: ${live_price}")
+                        msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (CALL) 🟢\n▪ سعر الدخول: ${trade['entry']}\n🔥 السعر الحالي: ${live_price}\n💰 جني أرباح فوري في محفظتك!"
+                        send_telegram_message(msg)
                         active_trades.pop(ticker)
+                        state_changed = True
                     elif live_price <= trade["stop_loss"]:
                         failed_count += 1
                         failed_tickers.append(f"{ticker} (CALL 🟢)")
-                        send_telegram_message(f"🛑 *ضرب وقف الخسارة - سهم {ticker}*\n▪ صفقة رقم #{trade['id']} (CALL) 🟢")
+                        msg = f"🛑 *تنبيه الوقف الفني - سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (CALL) 🟢\n⚠ ضرب وقف الخسارة (${trade['stop_loss']}) لحماية كاشك."
+                        send_telegram_message(msg)
                         active_trades.pop(ticker)
+                        state_changed = True
                         
                 elif trade["type"] == "PUT":
-                    if live_price <= trade["target1"]:
+                    if live_price <= trade["target"]:
                         success_count += 1
                         successful_tickers.append(f"{ticker} (PUT 🔴)")
-                        send_telegram_message(f"🎯 *هدف محقق بامتياز! سهم {ticker}*\n▪ صفقة رقم #{trade['id']} (PUT) 🔴\n▪ السعر الحالي: ${live_price}")
+                        msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (PUT) 🔴\n▪ سعر الدخول: ${trade['entry']}\n🔥 السعر الحالي المنخفض: ${live_price}\n💰 نقش أرباح الـ PUT يا بطل!"
+                        send_telegram_message(msg)
                         active_trades.pop(ticker)
+                        state_changed = True
                     elif live_price >= trade["stop_loss"]:
                         failed_count += 1
                         failed_tickers.append(f"{ticker} (PUT 🔴)")
-                        send_telegram_message(f"🛑 *ضرب وقف الخسارة - سهم {ticker}*\n▪ صفقة رقم #{trade['id']} (PUT) 🔴")
+                        msg = f"🛑 *تنبيه الوقف الفني - سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (PUT) 🔴\n⚠️ ضرب وقف الخسارة (${trade['stop_loss']}) لسلامة محفظتك."
+                        send_telegram_message(msg)
                         active_trades.pop(ticker)
+                        state_changed = True
+        
+        if state_changed:
+            save_state()
 
-        # --- مسح السوق وتصنيف الصفقات مع الـ 4 درجات والشرح ---
+        # --- 2. مسح السوق وفحص الفريمات الثلاثة (1H + 15m + 5m) ---
         for ticker in WATCHLIST:
             if ticker in active_trades or ticker in sent_signals:
                 continue
                 
-            market = get_market_data(ticker)
-            if market.get("success"):
-                entry_price = market["price"]
-                prev_close = market["prev_close"]
-                change_val = market["change"]
-                volume = market["volume"]
-                avg_vol = market["avg_volume"]
-                rsi = market["rsi"]
+            df_1h, df_15m, df_5m = fetch_multi_timeframe_data(ticker)
+            if df_1h is None or df_15m is None or df_5m is None:
+                continue
                 
-                vol_ratio = volume / avg_vol if avg_vol > 0 else 1.0
-
-                grade = ""
-                signal_type = ""
-
-                # 👑 1. الدرجة الأولى: الملكي الفاخر (⭐⭐⭐)
-                if abs(change_val) >= 2.0 and vol_ratio >= 1.5:
-                    grade = "الدرجة الأولى (الملكي الفاخر ⭐⭐⭐)"
-                    signal_type = "CALL" if change_val > 0 else "PUT"
-
-                # 🔥 2. الدرجة الثانية: النشط والسريع (⭐⭐)
-                elif abs(change_val) >= 1.2 and vol_ratio >= 1.2:
-                    grade = "الدرجة الثانية (النشط والسريع ⭐⭐)"
-                    signal_type = "CALL" if change_val > 0 else "PUT"
-
-                # ⚡ 3. الدرجة الثالثة: المضاربي اللحظي (⭐)
-                elif abs(change_val) >= 0.8 and vol_ratio >= 1.05:
-                    grade = "الدرجة الثالثة (المضاربي اللحظي ⭐)"
-                    signal_type = "CALL" if change_val > 0 else "PUT"
-
-                # 🚀 4. الدرجة الرابعة الجديدة: الفرصة المبكرة (✨) - لزيادة حيوية الصفقات
-                elif abs(change_val) >= 0.4 and vol_ratio >= 1.01:
-                    grade = "الدرجة الرابعة (الفرصة المبكرة والتقاط السيولة ✨)"
-                    signal_type = "CALL" if change_val > 0 else "PUT"
-
-                if grade and signal_type:
-                    signal_counter += 1
+            # استخراج شمعة الإغلاق لكل فريم لتأكيد التوافق
+            c_1h = df_1h.iloc[-2]
+            c_15m = df_15m.iloc[-2]
+            c_5m = df_5m.iloc[-2]
+            
+            # حساب السيولة على فريم 15 دقيقة و 5 دقائق للتأكد من العزم اللحظي
+            avg_vol_15m = df_15m['Volume'].tail(10).mean()
+            vol_ratio_15m = c_15m['Volume'] / avg_vol_15m if avg_vol_15m > 0 else 0
+            
+            # شروط توافق الاتجاه عبر الفريمات الثلاثة
+            bullish_trend = (c_1h['Close'] > c_1h['Open']) and (c_15m['Close'] > c_15m['Open']) and (c_5m['Close'] > c_5m['Open'])
+            bearish_trend = (c_1h['Close'] < c_1h['Open']) and (c_15m['Close'] < c_15m['Open']) and (c_5m['Close'] < c_5m['Open'])
+            
+            if vol_ratio_15m >= VOL_RATIO_MIN and (bullish_trend or bearish_trend):
+                signal_counter += 1
+                
+                # تقييم النخبة بناءً على قوة السيولة على فريم 15 دقيقة
+                if vol_ratio_15m >= 1.8:
+                    confidence_level = "قوية جداً (النخبة الثلاثية 🔥)"
+                elif vol_ratio_15m >= 1.4:
+                    confidence_level = "ممتازة (درجة ثانية ⭐)"
+                else:
+                    confidence_level = "مستقرة (درجة ثالثة 📊)"
+                
+                # صفقة صعود (CALL) متوافقة الفريمات
+                if bullish_trend:
+                    entry_price = round(c_5m['Close'], 2)
+                    stop_loss = round(c_5m['Low'] - 0.05, 2)
+                    risk = round(entry_price - stop_loss, 2)
                     
-                    if signal_type == "CALL":
-                        entry_low = round(entry_price * 0.998, 2)
-                        entry_high = round(entry_price * 1.002, 2)
-                        target1 = round(entry_price * 1.025, 2)
-                        target2 = round(entry_price * 1.05, 2)
-                        stop_loss = round(entry_price * 0.982, 2)
-                        icon = "🟢"
-                        title_emoji = "🔥"
-                    else:
-                        entry_low = round(entry_price * 0.998, 2)
-                        entry_high = round(entry_price * 1.002, 2)
-                        target1 = round(entry_price * 0.975, 2)
-                        target2 = round(entry_price * 0.95, 2)
-                        stop_loss = round(entry_price * 1.018, 2)
-                        icon = "🔴"
-                        title_emoji = "🩸"
-
-                    active_trades[ticker] = {
-                        "id": signal_counter, "type": signal_type, "entry": entry_price,
-                        "target1": target1, "stop_loss": stop_loss
-                    }
-                    sent_signals.add(ticker)
+                    if risk > 0:
+                        target = round(entry_price + (risk * RR_RATIO), 2)
+                        
+                        active_trades[ticker] = {
+                            "id": signal_counter, "type": "CALL", "entry": entry_price,
+                            "target": target, "stop_loss": stop_loss
+                        }
+                        sent_signals.add(ticker)
+                        save_state()
+                        
+                        message = (
+                            f"🔥 *صفقة CALL ثلاثية متوافقة رقم #{signal_counter}* 🔥\n"
+                            f"📊 *درجة الثقة:* `{confidence_level}`\n"
+                            f"📌 السهم: `{ticker}` | ⏰ الفريمات: `1H + 15m + 5m`\n"
+                            f"⏱ *المدة المتوقعة للهدف:* `سريعة (خلال ساعة إلى ساعتين)`\n"
+                            f"💵 سعر الدخول (فريم 5د): `{entry_price}$`\n"
+                            f"🛑 وقف الخسارة الفني: `{stop_loss}$`\n"
+                            f"🎯 الهدف المستهدف (1.5x): `{target}$`\n"
+                            f"⚡ سيولة الـ 15د: `{vol_ratio_15m:.2f}x`"
+                        )
+                        send_telegram_message(message)
+                        time.sleep(2)
+                
+                # صفقة هبوط (PUT) متوافقة الفريمات
+                elif bearish_trend:
+                    entry_price = round(c_5m['Close'], 2)
+                    stop_loss = round(c_5m['High'] + 0.05, 2)
+                    risk = round(stop_loss - entry_price, 2)
                     
-                    explanation_text = (
-                        f"• ⚡ *نسبة التغير ({change_val}%):* حُسبت بقانون (السعر الحالي ${entry_price} - إغلاق أمس ${prev_close}) ÷ إغلاق أمس × 100 على فريم الساعة.\n"
-                        f"• 🌊 *حجم السيولة ({int(volume):,} مقابل متوسط {int(avg_vol):,}):* حُسبت بمقارنة حجم التداول الحالي بمتوسط آخر 5 أيام ({round(vol_ratio, 1)}x).\n"
-                        f"• 📊 *مؤشر القوة (RSI: {rsi}):* حُسب بمتوسط سرعة الصعود والهبوط لآخر 14 شمعة."
-                    )
+                    if risk > 0:
+                        target = round(entry_price - (risk * RR_RATIO), 2)
+                        
+                        active_trades[ticker] = {
+                            "id": signal_counter, "type": "PUT", "entry": entry_price,
+                            "target": target, "stop_loss": stop_loss
+                        }
+                        sent_signals.add(ticker)
+                        save_state()
+                        
+                        message = (
+                            f"🔻 *صفقة PUT ثلاثية متوافقة رقم #{signal_counter}* 🔻\n"
+                            f"📊 *درجة الثقة:* `{confidence_level}`\n"
+                            f"📌 السهم: `{ticker}` | ⏰ الفريمات: `1H + 15m + 5m`\n"
+                            f"⏱ *المدة المتوقعة للهدف:* `سريعة (خلال ساعة إلى ساعتين)`\n"
+                            f"💵 سعر الدخول (فريم 5د): `{entry_price}$`\n"
+                            f"🛑 وقف الخسارة الفني: `{stop_loss}$`\n"
+                            f"🎯 الهدف المستهدف (1.5x): `{target}$`\n"
+                            f"⚡ سيولة الـ 15د: `{vol_ratio_15m:.2f}x`"
+                        )
+                        send_telegram_message(message)
+                        time.sleep(2)
 
-                    msg = (
-                        f"{title_emoji} *صفقة أوبشن يومية [{signal_type}] - {grade}* {icon}\n\n"
-                        f"📌 *رقم الصفقة:* `#{signal_counter}`\n"
-                        f"📌 *الرمز:* `{ticker}` | *الاتجاه:* `{signal_type} {icon}`\n"
-                        f"💵 *السعر الحالي:* `${entry_price}`\n\n"
-                        f"🧮 *كيف عرفنا وحسبنا المؤشرات؟ (كشف الهود):*\n"
-                        f"{explanation_text}\n\n"
-                        f"🎯 *منطقة الدخول الآمنة:* `${entry_low} - ${entry_high}`\n"
-                        f"• الهدف الأول: `${target1}` {icon}\n"
-                        f"• الهدف الثاني: `${target2}` 🎯\n"
-                        f"• وقف الخسارة: `${stop_loss}` 🛑"
-                    )
-                    
-                    keyboard = {
-                        "inline_keyboard": [
-                            [{"text": f"🔄 تحديث سعر {ticker} لايف", "callback_data": f"update_{ticker}"}]
-                        ]
-                    }
-                    send_telegram_message(msg, reply_markup=keyboard)
-                    time.sleep(2)
+        # --- 3. التقرير اليومي الختامي ---
+        if now_sa.hour >= 24 and not report_sent_today:
+            success_list_str = ", ".join(successful_tickers) if successful_tickers else "لا توجد"
+            failed_list_str = ", ".join(failed_tickers) if failed_tickers else "لا توجد"
+            running_tickers = [f"{t} ({info['type']})" for t, info in active_trades.items()]
+            running_list_str = ", ".join(running_tickers) if running_tickers else "لا توجد"
 
-        # --- التقرير الختامي اليومي عند إغلاق السوق ---
-        if now_sa.hour >= 23 and not report_sent_today:
-            success_str = ", ".join(successful_tickers) if successful_tickers else "لا توجد"
-            failed_str = ", ".join(failed_tickers) if failed_tickers else "لا توجد"
             report_msg = (
-                f"📊 *التقرير الختامي اليومي لرادار عبادي ({current_day})*\n\n"
-                f"▪ إجمالي الفرص المرسلة: {signal_counter}\n"
-                f"✅ الأهداف المحققة: {success_str}\n"
-                f"🛑 وقف الخسارة: {failed_str}\n"
+                f"📊 *التقرير الختامي اليومي لرادار الفريمات الثلاثة لجلسة {current_day}*\n\n"
+                f"🎯 *حصاد الصيدات والنتائج:* إجمالي الفرص: {signal_counter}\n\n"
+                f"✅ *الناجحة ({success_count}):*\n{success_list_str}\n\n"
+                f"🛑 *الخاسرة ({failed_count}):*\n{failed_list_str}\n\n"
+                f"⏳ *المستمرة للجلسة القادمة ({len(active_trades)}):*\n{running_list_str}\n"
+                f"───────────────────\n"
+                f"محفظتك تديرها منظومة ذكية بالملي يا بطل! 🦅🔥"
             )
             send_telegram_message(report_msg)
             report_sent_today = True
@@ -299,7 +307,16 @@ def analyze_market_and_send():
         time.sleep(30)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_web_server, daemon=True).start()
-    threading.Thread(target=check_telegram_updates, daemon=True).start()
-    send_telegram_message("🦅 *رادار عبادي (بالـ 4 درجات والشرح التكتيكي) جاهز للعمل!*")
+    server_thread = threading.Thread(target=run_web_server, daemon=True)
+    server_thread.start()
+
+    try:
+        startup_msg = (
+            "🦅 *تم تدشين رادار الفريمات الثلاثة الخارق (1H + 15m + 5m) بنجاح!*\n"
+            "🎯 البوت يدمج اتجاه الساعة، وهندسة الـ 15 دقيقة، وسرعة الـ 5 دقائق لايف!"
+        )
+        send_telegram_message(startup_msg)
+    except Exception as e:
+        print(f"Startup error: {e}")
+        
     analyze_market_and_send()
