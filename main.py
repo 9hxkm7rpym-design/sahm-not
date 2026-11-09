@@ -9,7 +9,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ==========================================
-# 📊 إعدادات الرادار الثلاثي المستقر (1H + 15m + 5m)
+# 📊 إعدادات الرادار المستقر (فريم 15 دقيقة - حركة نشطة وأداء عالي)
 # ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
@@ -20,6 +20,7 @@ WATCHLIST = [
     "ROKU", "SPY", "SQ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
+TIMEFRAME = "15m"
 VOL_RATIO_MIN = 1.2
 RR_RATIO = 1.5  # نسبة الربح إلى الخطر
 
@@ -43,7 +44,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Radar Club Stable & Active!")
+        self.wfile.write(b"Radar Club 15m Active & Stable!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -74,20 +75,14 @@ def load_state():
         except Exception as e:
             print(f"Error loading state: {e}")
 
-def fetch_multi_timeframe_data(ticker):
+def fetch_market_data(ticker):
     try:
-        df_1h = yf.download(ticker, period="3d", interval="1h", progress=False)
-        df_15m = yf.download(ticker, period="2d", interval="15m", progress=False)
-        df_5m = yf.download(ticker, period="1d", interval="5m", progress=False)
-        
-        if df_1h is None or df_15m is None or df_5m is None:
-            return None, None, None
-        if df_1h.empty or df_15m.empty or df_5m.empty:
-            return None, None, None
-            
-        return df_1h, df_15m, df_5m
+        df = yf.download(ticker, period="5d", interval=TIMEFRAME, progress=False)
+        if df is None or df.empty or len(df) < 10:
+            return None
+        return df
     except Exception as e:
-        return None, None, None
+        return None
 
 def get_live_price(ticker):
     try:
@@ -103,7 +98,7 @@ def get_live_price(ticker):
 def check_market_trend():
     global last_market_trend_msg
     try:
-        df = yf.download("SPY", period="2d", interval="1h", progress=False)
+        df = yf.download("SPY", period="2d", interval="15m", progress=False)
         if not df.empty and len(df) >= 2:
             close_p = df.iloc[-1]['Close']
             open_p = df.iloc[-1]['Open']
@@ -192,39 +187,42 @@ def analyze_market_and_send():
             if state_changed:
                 save_state()
 
-            # --- 2. مسح السوق وفحص الفريمات الثلاثة ---
+            # --- 2. مسح السوق وفحص فريم 15 دقيقة ---
             for ticker in WATCHLIST:
                 if ticker in active_trades or ticker in sent_signals:
                     continue
                     
-                df_1h, df_15m, df_5m = fetch_multi_timeframe_data(ticker)
-                if df_1h is None or df_15m is None or df_5m is None:
+                df = fetch_market_data(ticker)
+                if df is None:
                     continue
                 
                 try:
-                    c_1h = df_1h.iloc[-2]
-                    c_15m = df_15m.iloc[-2]
-                    c_5m = df_5m.iloc[-2]
+                    prev_candle = df.iloc[-2]
+                    avg_volume = df['Volume'].tail(10).mean()
+                    current_volume = prev_candle['Volume']
+                    vol_ratio = current_volume / avg_volume if avg_volume > 0 else 0
                     
-                    avg_vol_15m = df_15m['Volume'].tail(10).mean()
-                    vol_ratio_15m = c_15m['Volume'] / avg_vol_15m if avg_vol_15m > 0 else 0
+                    high = prev_candle['High']
+                    low = prev_candle['Low']
+                    close = prev_candle['Close']
+                    open_p = prev_candle['Open']
                     
-                    bullish_trend = (c_1h['Close'] > c_1h['Open']) and (c_15m['Close'] > c_15m['Open']) and (c_5m['Close'] > c_5m['Open'])
-                    bearish_trend = (c_1h['Close'] < c_1h['Open']) and (c_15m['Close'] < c_15m['Open']) and (c_5m['Close'] < c_5m['Open'])
+                    is_bullish = close > open_p
+                    is_bearish = close < open_p
                     
-                    if vol_ratio_15m >= VOL_RATIO_MIN and (bullish_trend or bearish_trend):
+                    if vol_ratio >= VOL_RATIO_MIN:
                         signal_counter += 1
                         
-                        if vol_ratio_15m >= 1.8:
-                            confidence_level = "قوية جداً (النخبة الثلاثية 🔥)"
-                        elif vol_ratio_15m >= 1.4:
+                        if vol_ratio >= 1.8:
+                            confidence_level = "قوية جداً (النخبة 🔥)"
+                        elif vol_ratio >= 1.4:
                             confidence_level = "ممتازة (درجة ثانية ⭐)"
                         else:
                             confidence_level = "مستقرة (درجة ثالثة 📊)"
                         
-                        if bullish_trend:
-                            entry_price = round(c_5m['Close'], 2)
-                            stop_loss = round(c_5m['Low'] - 0.05, 2)
+                        if is_bullish:
+                            entry_price = round(close, 2)
+                            stop_loss = round(low - 0.05, 2)
                             risk = round(entry_price - stop_loss, 2)
                             
                             if risk > 0:
@@ -237,21 +235,21 @@ def analyze_market_and_send():
                                 save_state()
                                 
                                 message = (
-                                    f"🔥 *صفقة CALL ثلاثية متوافقة رقم #{signal_counter}* 🔥\n"
+                                    f"🔥 *صفقة CALL جديدة رقم #{signal_counter}* 🔥\n"
                                     f"📊 *درجة الثقة:* `{confidence_level}`\n"
-                                    f"📌 السهم: `{ticker}` | ⏰ الفريمات: `1H + 15m + 5m`\n"
-                                    f"⏱ *المدة المتوقعة للهدف:* `سريعة (خلال ساعة إلى ساعتين)`\n"
-                                    f"💵 سعر الدخول (فريم 5د): `{entry_price}$`\n"
+                                    f"📌 السهم: `{ticker}` | ⏰ الفريم: `15 دقيقة`\n"
+                                    f"⏱ *المدة المتوقعة للهدف:* `سريعة (خلال الجلسة الحالية)`\n"
+                                    f"💵 سعر الدخول: `{entry_price}$`\n"
                                     f"🛑 وقف الخسارة الفني: `{stop_loss}$`\n"
                                     f"🎯 الهدف المستهدف (1.5x): `{target}$`\n"
-                                    f"⚡ سيولة الـ 15د: `{vol_ratio_15m:.2f}x`"
+                                    f"⚡ السيولة (Vol_Ratio): `{vol_ratio:.2f}x`"
                                 )
                                 send_telegram_message(message)
                                 time.sleep(2)
                         
-                        elif bearish_trend:
-                            entry_price = round(c_5m['Close'], 2)
-                            stop_loss = round(c_5m['High'] + 0.05, 2)
+                        elif is_bearish:
+                            entry_price = round(close, 2)
+                            stop_loss = round(high + 0.05, 2)
                             risk = round(stop_loss - entry_price, 2)
                             
                             if risk > 0:
@@ -264,14 +262,14 @@ def analyze_market_and_send():
                                 save_state()
                                 
                                 message = (
-                                    f"🔻 *صفقة PUT ثلاثية متوافقة رقم #{signal_counter}* 🔻\n"
+                                    f"🔻 *صفقة PUT عكسية جديدة رقم #{signal_counter}* 🔻\n"
                                     f"📊 *درجة الثقة:* `{confidence_level}`\n"
-                                    f"📌 السهم: `{ticker}` | ⏰ الفريمات: `1H + 15m + 5m`\n"
-                                    f"⏱ *المدة المتوقعة للهدف:* `سريعة (خلال ساعة إلى ساعتين)`\n"
-                                    f"💵 سعر الدخول (فريم 5د): `{entry_price}$`\n"
+                                    f"📌 السهم: `{ticker}` | ⏰ الفريم: `15 دقيقة`\n"
+                                    f"⏱ *المدة المتوقعة للهدف:* `سريعة (خلال الجلسة الحالية)`\n"
+                                    f"💵 سعر الدخول: `{entry_price}$`\n"
                                     f"🛑 وقف الخسارة الفني: `{stop_loss}$`\n"
                                     f"🎯 الهدف المستهدف (1.5x): `{target}$`\n"
-                                    f"⚡ سيولة الـ 15د: `{vol_ratio_15m:.2f}x`"
+                                    f"⚡ السيولة (Vol_Ratio): `{vol_ratio:.2f}x`"
                                 )
                                 send_telegram_message(message)
                                 time.sleep(2)
@@ -287,13 +285,13 @@ def analyze_market_and_send():
                 running_list_str = ", ".join(running_tickers) if running_tickers else "لا توجد"
 
                 report_msg = (
-                    f"📊 *التقرير الختامي اليومي لرادار الفريمات الثلاثة لجلسة {current_day}*\n\n"
+                    f"📊 *التقرير الختامي اليومي لرادار 15 دقيقة لجلسة {current_day}*\n\n"
                     f"🎯 *حصاد الصيدات والنتائج:* إجمالي الفرص: {signal_counter}\n\n"
                     f"✅ *الناجحة ({success_count}):*\n{success_list_str}\n\n"
                     f"🛑 *الخاسرة ({failed_count}):*\n{failed_list_str}\n\n"
                     f"⏳ *المستمرة للجلسة القادمة ({len(active_trades)}):*\n{running_list_str}\n"
                     f"───────────────────\n"
-                    f"محفظتك تديرها منظومة ذكية بالملي يا بطل! 🦅🔥"
+                    f"محفظتك تديرها منظومة نشطة بالملي يا بطل! 🦅🔥"
                 )
                 send_telegram_message(report_msg)
                 report_sent_today = True
@@ -309,8 +307,8 @@ if __name__ == "__main__":
 
     try:
         startup_msg = (
-            "🦅 *تم تدشين رادار الفريمات الثلاثة (النسخة المستقرّة) بنجاح!*\n"
-            "🎯 البوت يعمل بثبات تام ولن يعيد تشغيل نفسه، ويراقب السوق بدقة!"
+            "🦅 *تم تدشين رادار الـ 15 دقيقة المستقر بنجاح!*\n"
+            "🎯 البوت يعمل بثبات تام، ولن يعيد تشغيل نفسه، ويراقب السوق بكل قوة!"
         )
         send_telegram_message(startup_msg)
     except Exception as e:
