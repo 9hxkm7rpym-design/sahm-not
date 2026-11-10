@@ -8,7 +8,7 @@ import yfinance as yf
 import pandas as pd
 
 # ==========================================
-# 🚀 رادار النخبة الشامل (مع إرسال تنبيه تجريبي فوري عند التشغيل)
+# 🚀 رادار النخبة الشامل (مع إرسال صفقة تجريبية حية من السوق فوراً)
 # ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
@@ -19,7 +19,7 @@ WATCHLIST = [
     "DIS", "JPM", "QQQ", "SPY", "ROKU", "SQ", "UBER", "V", "WMT", "PFE"
 ]
 
-TIMEFRAME = "5m"  # فريم 5 دقائق لضمان سرعة وكثرة الإشارات والأكشن
+TIMEFRAME = "5m"  
 active_trades = {}      
 sent_signals = set()    
 success_count = 0       
@@ -36,7 +36,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Ultimate 0DTE Options Radar Active!")
+        self.wfile.write(b"Ultimate Live Test Options Radar Active!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -96,6 +96,36 @@ def calculate_indicators(df):
     df['ATR'] = true_range.rolling(14).mean()
     
     return df
+
+def send_forced_test_signal():
+    """وظيفة لإرسال صفقة تجريبية فورية مستخرجة من سهم حقيقي بالسوق للتحقق"""
+    try:
+        test_ticker = "NVDA"
+        df = fetch_chart_data(test_ticker)
+        if df is not None and not df.empty:
+            prev = df.iloc[-2]
+            close = float(prev['Close'])
+            low = float(prev['Low'])
+            
+            entry_price = round(close, 2)
+            stop_loss = round(low - 0.05, 2)
+            risk = round(entry_price - stop_loss, 2)
+            target = round(entry_price + (risk * 1.5), 2)
+            
+            msg = (
+                f"🧪 *[صفقة تجريبية حية من السوق]* 🧪\n"
+                f"🚀 *صفقة CALL مكثفة #TEST* 🚀\n"
+                f"📌 السهم: `{test_ticker}` | فريم: `5m`\n"
+                f"⏳ مدة العقد المقترحة: *عقود نفس اليوم (0DTE - تنتهي اليوم)*\n"
+                f"💵 الدخول: `{entry_price}$` | الوقف (قاع الشمعة): `{stop_loss}$`\n"
+                f"🎯 الهدف: `{target}$` (RR 1.5)\n"
+                f"⚡ RVOL: `1.75x` | RSI: `55.4`\n"
+                f"───────────────────\n"
+                f"✅ تم سحب البيانات من السوق بنجاح وجاهز للأكشن!"
+            )
+            send_telegram_message(msg)
+    except Exception as e:
+        print(f"Test signal error: {e}")
 
 def analyze_market_and_send():
     global report_sent_today, last_reset_day, signal_counter, success_count, failed_count, successful_tickers, failed_tickers
@@ -158,7 +188,7 @@ def analyze_market_and_send():
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
 
-        # --- 2. فحص الأسهم وإرسال الإشارات مع تحديد مدة العقد ---
+        # --- 2. فحص الأسهم وإرسال الإشارات الفعلية ---
         for ticker in WATCHLIST:
             if ticker in active_trades:
                 continue
@@ -265,15 +295,9 @@ if __name__ == "__main__":
     server_thread.start()
 
     try:
-        # رسالة التشغيل والتحقق الفوري للتليجرام
-        test_startup_msg = (
-            "🧪 *تنبيه تجريبي فوري: تم ربط رادار النخبة بنجاح!* 🚀\n"
-            "▪ البوت يراقب 30 شركة جاهزة.\n"
-            "▪ مؤشرات الفني والوقف الفني ومدة 0DTE مفعلة.\n"
-            "▪ بانتظار فتح جلسة التداول لإرسال الأكشن الحقيقي!"
-        )
-        send_telegram_message(test_startup_msg)
+        # إرسال صفقة تجريبية حية مستخرجة من سهم NVDA فور التشغيل
+        send_forced_test_signal()
     except Exception as e:
-        print(f"Startup error: {e}")
+        print(f"Startup test signal error: {e}")
         
     analyze_market_and_send()
