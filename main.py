@@ -8,7 +8,7 @@ import yfinance as yf
 import pandas as pd
 
 # ==========================================
-# 🚀 رادار النخبة الشامل (التصميم الجديد الاحترافي)
+# 🚀 رادار النخبة الشامل (فريم 5 دقائق + أهداف واسعة ووقف آمن للأوبشن)
 # ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
@@ -19,7 +19,7 @@ WATCHLIST = [
     "DIS", "JPM", "QQQ", "SPY", "ROKU", "SQ", "UBER", "V", "WMT", "PFE"
 ]
 
-TIMEFRAME = "5m"  
+TIMEFRAME = "5m"  # فريم 5 دقائق للاستقرار وقوة الإشارات
 active_trades = {}      
 sent_signals = set()    
 success_count = 0       
@@ -36,7 +36,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Ultimate Pro Radar Active!")
+        self.wfile.write(b"Ultimate Pro Radar 5m Active!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -88,6 +88,7 @@ def calculate_indicators(df):
     
     df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
     
+    # حساب ATR الحقيقي من فريم الـ 5 دقائق لتحديد وقف آمن وواسع
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
     low_close = (df['Low'] - df['Close'].shift()).abs()
@@ -96,29 +97,6 @@ def calculate_indicators(df):
     df['ATR'] = true_range.rolling(14).mean()
     
     return df
-
-def send_forced_test_signal():
-    """إرسال صفقة تجريبية مباشرة بالشكل الجديد المطابق للطلب"""
-    now_sa = datetime.utcnow() + timedelta(hours=3)
-    target_date = now_sa.strftime("%Y-%m-%d")
-    
-    msg = (
-        f"💥 *صفقة جديدة رقم #TEST* 💥\n"
-        f"📊 درجة الثقة: تأكيد صعود (درجة ممتازة 🟪)\n"
-        f"📈 نسبة الصعود: +2.45%\n"
-        f"📌 السهم: NVDA | الاتجاه: CALL 🟢\n"
-        f"💵 سعر دخول السهم: 135.50$\n"
-        f"───────────────────\n"
-        f"🎯 *المستهدفات (عقود 0DTE):*\n"
-        f"• الهدف الأول: 136.65$ | الهدف الثاني: 137.40$\n"
-        f"🛑 صمام الأمان (الوقف تحت السعر): 134.80$\n"
-        f"───────────────────\n"
-        f"⏳ المدى المتوقع للهدف: متوسطة (خلال جلسة تداول)\n"
-        f"📅 التاريخ المستهدف بالملي: {target_date}\n"
-        f"───────────────────\n"
-        f"💬 تمت ملاحظة حركة ثابتة وقوية على أسهم NVDA."
-    )
-    send_telegram_message(msg)
 
 def analyze_market_and_send():
     global report_sent_today, last_reset_day, signal_counter, success_count, failed_count, successful_tickers, failed_tickers
@@ -144,6 +122,7 @@ def analyze_market_and_send():
             time.sleep(3600)
             continue
 
+        # التوقيت الشتوي: 5:30 مساءً إلى 12 منتصف الليل
         if current_time_float < 17.5 or current_time_float > 24.0:
             time.sleep(60)
             continue
@@ -180,7 +159,7 @@ def analyze_market_and_send():
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
 
-        # --- 2. فحص الأسهم وإرسال الإشارات بالتصميم الجديد ---
+        # --- 2. فحص الأسهم واستخراج الأهداف والوقف الآمن من الشارت ---
         for ticker in WATCHLIST:
             if ticker in active_trades:
                 continue
@@ -193,10 +172,9 @@ def analyze_market_and_send():
                 df = calculate_indicators(df)
                 prev = df.iloc[-2]
                 
-                high = prev['High']
-                low = prev['Low']
-                close = prev['Close']
-                open_p = prev['Open']
+                close = float(prev['Close'])
+                open_p = float(prev['Open'])
+                atr = float(prev['ATR']) if not pd.isna(prev['ATR']) else (close * 0.008)
                 
                 rsi = prev['RSI']
                 macd = prev['MACD']
@@ -212,12 +190,14 @@ def analyze_market_and_send():
                 if is_call:
                     signal_counter += 1
                     entry_price = round(close, 2)
-                    stop_loss = round(low - 0.05, 2)
+                    # وقف آمن وواسع يعتمد على ATR شارت 5m
+                    stop_loss = round(entry_price - (atr * 1.5), 2)
                     risk = round(entry_price - stop_loss, 2)
                     
                     if risk > 0:
-                        target1 = round(entry_price + (risk * 1.0), 2)
-                        target2 = round(entry_price + (risk * 1.5), 2)
+                        target1 = round(entry_price + (risk * 1.5), 2)
+                        target2 = round(entry_price + (risk * 2.5), 2)
+                        
                         active_trades[ticker] = {
                             "id": signal_counter, "type": "CALL", "entry": entry_price,
                             "target1": target1, "target2": target2, "stop_loss": stop_loss
@@ -230,14 +210,14 @@ def analyze_market_and_send():
                             f"📌 السهم: `{ticker}` | الاتجاه: CALL 🟢\n"
                             f"💵 سعر دخول السهم: `{entry_price}$`\n"
                             f"───────────────────\n"
-                            f"🎯 *المستهدفات (عقود 0DTE):*\n"
+                            f"🎯 *المستهدفات من الشارت (عقود 0DTE):*\n"
                             f"• الهدف الأول: `{target1}$` | الهدف الثاني: `{target2}$`\n"
-                            f"🛑 صمام الأمان (الوقف تحت السعر): `{stop_loss}$`\n"
+                            f"🛑 صمام الأمان (الوقف الآمن): `{stop_loss}$`\n"
                             f"───────────────────\n"
-                            f"⏳ المدى المتوقع للهدف: متوسطة (خلال جلسة تداول)\n"
+                            f"⏳ المدى المتوقع للهدف: قوية (فريم 5 دقائق)\n"
                             f"📅 التاريخ المستهدف بالملي: `{current_day}`\n"
                             f"───────────────────\n"
-                            f"💬 تمت ملاحظة حركة ثابتة وقوية على أسهم `{ticker}`."
+                            f"💬 تمت ملاحظة زخم عالي وسيولة حقيقية على أسهم `{ticker}`."
                         )
                         send_telegram_message(msg)
                         time.sleep(1)
@@ -245,12 +225,14 @@ def analyze_market_and_send():
                 elif is_put:
                     signal_counter += 1
                     entry_price = round(close, 2)
-                    stop_loss = round(high + 0.05, 2)
+                    # وقف آمن وواسع يعتمد على ATR شارت 5m
+                    stop_loss = round(entry_price + (atr * 1.5), 2)
                     risk = round(stop_loss - entry_price, 2)
                     
                     if risk > 0:
-                        target1 = round(entry_price - (risk * 1.0), 2)
-                        target2 = round(entry_price - (risk * 1.5), 2)
+                        target1 = round(entry_price - (risk * 1.5), 2)
+                        target2 = round(entry_price - (risk * 2.5), 2)
+                        
                         active_trades[ticker] = {
                             "id": signal_counter, "type": "PUT", "entry": entry_price,
                             "target1": target1, "target2": target2, "stop_loss": stop_loss
@@ -263,14 +245,14 @@ def analyze_market_and_send():
                             f"📌 السهم: `{ticker}` | الاتجاه: PUT 🔴\n"
                             f"💵 سعر دخول السهم: `{entry_price}$`\n"
                             f"───────────────────\n"
-                            f"🎯 *المستهدفات (عقود هبوط):*\n"
+                            f"🎯 *المستهدفات من الشارت (عقود هبوط):*\n"
                             f"• الهدف الأول: `{target1}$` | الهدف الثاني: `{target2}$`\n"
-                            f"🛑 صمام الأمان (الوقف فوق السعر): `{stop_loss}$`\n"
+                            f"🛑 صمام الأمان (الوقف الآمن): `{stop_loss}$`\n"
                             f"───────────────────\n"
-                            f"⏳ المدى المتوقع للهدف: متوسطة (خلال جلسة تداول)\n"
+                            f"⏳ المدى المتوقع للهدف: قوية (فريم 5 دقائق)\n"
                             f"📅 التاريخ المستهدف بالملي: `{current_day}`\n"
                             f"───────────────────\n"
-                            f"💬 تمت ملاحظة حركة ثابتة وقوية على أسهم `{ticker}`."
+                            f"💬 تمت ملاحظة زخم عالي وسيولة حقيقية على أسهم `{ticker}`."
                         )
                         send_telegram_message(msg)
                         time.sleep(1)
@@ -301,11 +283,5 @@ def analyze_market_and_send():
 if __name__ == "__main__":
     server_thread = threading.Thread(target=run_web_server, daemon=True)
     server_thread.start()
-
-    try:
-        # إرسال تجربة فورية بالتصميم الجديد للتأكد
-        send_forced_test_signal()
-    except Exception as e:
-        print(f"Startup test signal error: {e}")
         
     analyze_market_and_send()
