@@ -8,7 +8,7 @@ import yfinance as yf
 import pandas as pd
 
 # ==========================================
-# 🚀 رادار النخبة الاحترافي للأوبشن (النسخة النهائية الحقيقية)
+# 🚀 رادار النخبة الاحترافي للأوبشن (النسخة النهائية مع رسالة الاتصال الفورية)
 # ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
@@ -51,6 +51,17 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"Error sending message: {e}")
 
+def send_startup_confirmation():
+    """رسالة تأكيد فورية أول ما يشتغل البوت لضمان أن الاتصال شغال 100%"""
+    now_sa = datetime.utcnow() + timedelta(hours=3)
+    msg = (
+        f"🟢 *تم تشغيل رادار النخبة بنجاح!* 🦅\n"
+        f"📡 البوت يراقب 30 شركة بدقة على فريم `5m`.\n"
+        f"🛡️ الوقف الآمن (ATR) والأهداف الحقيقية مفعلة.\n"
+        f"⏳ بانتظار رصد الفرص الحية وإرسالها فوراً!"
+    )
+    send_telegram_message(msg)
+
 def get_live_price(ticker):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d"
@@ -88,7 +99,6 @@ def calculate_indicators(df):
     
     df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
     
-    # حساب نطاق الأمان الحقيقي ATR لفريم 5m
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
     low_close = (df['Low'] - df['Close'].shift()).abs()
@@ -122,7 +132,6 @@ def analyze_market_and_send():
             time.sleep(3600)
             continue
 
-        # التوقيت الشتوي: 5:30 مساءً إلى 12 منتصف الليل بتوقيت السعودية
         if current_time_float < 17.5 or current_time_float > 24.0:
             time.sleep(60)
             continue
@@ -184,7 +193,6 @@ def analyze_market_and_send():
                 avg_vol = df['Volume'].tail(10).mean()
                 rvol = prev['Volume'] / avg_vol if avg_vol > 0 else 1
                 
-                # شروط حقيقية وصارمة لدخول الصفقات
                 is_call = (close > open_p) and (close > vwap) and (macd > sig) and (rvol >= 1.0)
                 is_put = (close < open_p) and (close < vwap) and (macd < sig) and (rvol >= 1.0)
                 
@@ -282,5 +290,11 @@ def analyze_market_and_send():
 if __name__ == "__main__":
     server_thread = threading.Thread(target=run_web_server, daemon=True)
     server_thread.start()
+    
+    # إرسال رسالة التأكيد فور تشغيل البوت
+    try:
+        send_startup_confirmation()
+    except Exception as e:
+        print(f"Startup message error: {e}")
         
     analyze_market_and_send()
