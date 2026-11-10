@@ -8,7 +8,7 @@ import yfinance as yf
 import pandas as pd
 
 # ==========================================
-# 🚀 رادار النخبة الشامل (فريم 5 دقائق + أهداف واسعة ووقف آمن للأوبشن)
+# 🚀 رادار النخبة الاحترافي للأوبشن (النسخة النهائية الحقيقية)
 # ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
@@ -19,7 +19,7 @@ WATCHLIST = [
     "DIS", "JPM", "QQQ", "SPY", "ROKU", "SQ", "UBER", "V", "WMT", "PFE"
 ]
 
-TIMEFRAME = "5m"  # فريم 5 دقائق للاستقرار وقوة الإشارات
+TIMEFRAME = "5m"  
 active_trades = {}      
 sent_signals = set()    
 success_count = 0       
@@ -36,7 +36,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Ultimate Pro Radar 5m Active!")
+        self.wfile.write(b"Ultimate Live Options Radar Active!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -88,7 +88,7 @@ def calculate_indicators(df):
     
     df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
     
-    # حساب ATR الحقيقي من فريم الـ 5 دقائق لتحديد وقف آمن وواسع
+    # حساب نطاق الأمان الحقيقي ATR لفريم 5m
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
     low_close = (df['Low'] - df['Close'].shift()).abs()
@@ -122,7 +122,7 @@ def analyze_market_and_send():
             time.sleep(3600)
             continue
 
-        # التوقيت الشتوي: 5:30 مساءً إلى 12 منتصف الليل
+        # التوقيت الشتوي: 5:30 مساءً إلى 12 منتصف الليل بتوقيت السعودية
         if current_time_float < 17.5 or current_time_float > 24.0:
             time.sleep(60)
             continue
@@ -159,7 +159,7 @@ def analyze_market_and_send():
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
 
-        # --- 2. فحص الأسهم واستخراج الأهداف والوقف الآمن من الشارت ---
+        # --- 2. الفحص الحقيقي للسوق وإرسال الإشارات الحية ---
         for ticker in WATCHLIST:
             if ticker in active_trades:
                 continue
@@ -184,13 +184,13 @@ def analyze_market_and_send():
                 avg_vol = df['Volume'].tail(10).mean()
                 rvol = prev['Volume'] / avg_vol if avg_vol > 0 else 1
                 
+                # شروط حقيقية وصارمة لدخول الصفقات
                 is_call = (close > open_p) and (close > vwap) and (macd > sig) and (rvol >= 1.0)
                 is_put = (close < open_p) and (close < vwap) and (macd < sig) and (rvol >= 1.0)
                 
                 if is_call:
                     signal_counter += 1
                     entry_price = round(close, 2)
-                    # وقف آمن وواسع يعتمد على ATR شارت 5m
                     stop_loss = round(entry_price - (atr * 1.5), 2)
                     risk = round(entry_price - stop_loss, 2)
                     
@@ -210,14 +210,14 @@ def analyze_market_and_send():
                             f"📌 السهم: `{ticker}` | الاتجاه: CALL 🟢\n"
                             f"💵 سعر دخول السهم: `{entry_price}$`\n"
                             f"───────────────────\n"
-                            f"🎯 *المستهدفات من الشارت (عقود 0DTE):*\n"
+                            f"🎯 *المستهدفات الحية (عقود 0DTE):*\n"
                             f"• الهدف الأول: `{target1}$` | الهدف الثاني: `{target2}$`\n"
                             f"🛑 صمام الأمان (الوقف الآمن): `{stop_loss}$`\n"
                             f"───────────────────\n"
                             f"⏳ المدى المتوقع للهدف: قوية (فريم 5 دقائق)\n"
                             f"📅 التاريخ المستهدف بالملي: `{current_day}`\n"
                             f"───────────────────\n"
-                            f"💬 تمت ملاحظة زخم عالي وسيولة حقيقية على أسهم `{ticker}`."
+                            f"💬 رصد سيولة حقيقية وتقاطع إيجابي لفوليوم `{ticker}`."
                         )
                         send_telegram_message(msg)
                         time.sleep(1)
@@ -225,7 +225,6 @@ def analyze_market_and_send():
                 elif is_put:
                     signal_counter += 1
                     entry_price = round(close, 2)
-                    # وقف آمن وواسع يعتمد على ATR شارت 5m
                     stop_loss = round(entry_price + (atr * 1.5), 2)
                     risk = round(stop_loss - entry_price, 2)
                     
@@ -245,14 +244,14 @@ def analyze_market_and_send():
                             f"📌 السهم: `{ticker}` | الاتجاه: PUT 🔴\n"
                             f"💵 سعر دخول السهم: `{entry_price}$`\n"
                             f"───────────────────\n"
-                            f"🎯 *المستهدفات من الشارت (عقود هبوط):*\n"
+                            f"🎯 *المستهدفات الحية (عقود هبوط):*\n"
                             f"• الهدف الأول: `{target1}$` | الهدف الثاني: `{target2}$`\n"
                             f"🛑 صمام الأمان (الوقف الآمن): `{stop_loss}$`\n"
                             f"───────────────────\n"
                             f"⏳ المدى المتوقع للهدف: قوية (فريم 5 دقائق)\n"
                             f"📅 التاريخ المستهدف بالملي: `{current_day}`\n"
                             f"───────────────────\n"
-                            f"💬 تمت ملاحظة زخم عالي وسيولة حقيقية على أسهم `{ticker}`."
+                            f"💬 رصد سيولة حقيقية وضغط بيعي على أسهم `{ticker}`."
                         )
                         send_telegram_message(msg)
                         time.sleep(1)
