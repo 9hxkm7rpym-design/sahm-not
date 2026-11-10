@@ -8,7 +8,7 @@ import yfinance as yf
 import pandas as pd
 
 # ==========================================
-# 🚀 رادار النخبة الشامل (تجربة فورية مباشرة بدون شروط)
+# 🚀 رادار النخبة الشامل (التصميم الجديد الاحترافي)
 # ==========================================
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
@@ -36,7 +36,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Ultimate Test Options Radar Active!")
+        self.wfile.write(b"Ultimate Pro Radar Active!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -47,8 +47,7 @@ def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
-        response = requests.post(url, json=payload, timeout=5)
-        print("Telegram Response:", response.text) # طباعة الاستجابة في الكونسول للتحقق
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Error sending message: {e}")
 
@@ -99,17 +98,25 @@ def calculate_indicators(df):
     return df
 
 def send_forced_test_signal():
-    """إرسال صفقة تجريبية مباشرة للتأكد من وصولها"""
+    """إرسال صفقة تجريبية مباشرة بالشكل الجديد المطابق للطلب"""
+    now_sa = datetime.utcnow() + timedelta(hours=3)
+    target_date = now_sa.strftime("%Y-%m-%d")
+    
     msg = (
-        f"🧪 *[صفقة تجريبية حية مباشرة]* 🧪\n"
-        f"🚀 *صفقة CALL مكثفة #TEST* 🚀\n"
-        f"📌 السهم: `NVDA` | فريم: `5m`\n"
-        f"⏳ مدة العقد المقترحة: *عقود نفس اليوم (0DTE - تنتهي اليوم)*\n"
-        f"💵 الدخول: `135.50$` | الوقف (قاع الشمعة): `134.80$`\n"
-        f"🎯 الهدف: `136.55$` (RR 1.5)\n"
-        f"⚡ RVOL: `1.75x` | RSI: `55.4`\n"
+        f"💥 *صفقة جديدة رقم #TEST* 💥\n"
+        f"📊 درجة الثقة: تأكيد صعود (درجة ممتازة 🟪)\n"
+        f"📈 نسبة الصعود: +2.45%\n"
+        f"📌 السهم: NVDA | الاتجاه: CALL 🟢\n"
+        f"💵 سعر دخول السهم: 135.50$\n"
         f"───────────────────\n"
-        f"✅ السيرفر يقدح والتليجرام شغال 100%!"
+        f"🎯 *المستهدفات (عقود 0DTE):*\n"
+        f"• الهدف الأول: 136.65$ | الهدف الثاني: 137.40$\n"
+        f"🛑 صمام الأمان (الوقف تحت السعر): 134.80$\n"
+        f"───────────────────\n"
+        f"⏳ المدى المتوقع للهدف: متوسطة (خلال جلسة تداول)\n"
+        f"📅 التاريخ المستهدف بالملي: {target_date}\n"
+        f"───────────────────\n"
+        f"💬 تمت ملاحظة حركة ثابتة وقوية على أسهم NVDA."
     )
     send_telegram_message(msg)
 
@@ -146,34 +153,34 @@ def analyze_market_and_send():
             live_price = get_live_price(ticker)
             if live_price:
                 if trade["type"] == "CALL":
-                    if live_price >= trade["target"]:
+                    if live_price >= trade["target2"]:
                         success_count += 1
                         successful_tickers.append(f"{ticker} (CALL 🟢)")
-                        msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (CALL) 🟢\n▪ سعر الدخول: ${trade['entry']}\n🔥 السعر الحالي: ${live_price}\n💰 جني أرباح فوري!"
+                        msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (CALL) 🟢\n▪ سعر الدخول: ${trade['entry']}\n🔥 السعر الحالي: ${live_price}\n💰 حقق الهدف الثاني بنجاح!"
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
                     elif live_price <= trade["stop_loss"]:
                         failed_count += 1
                         failed_tickers.append(f"{ticker} (CALL 🟢)")
-                        msg = f"🛑 *وقف الخسارة الفني - سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (CALL) 🟢\n⚠ ضرب قاع الوقف (${trade['stop_loss']})."
+                        msg = f"🛑 *صمام الأمان (وقف الخسارة) - سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (CALL) 🟢\n⚠ ضرب الوقف (${trade['stop_loss']})."
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
                         
                 elif trade["type"] == "PUT":
-                    if live_price <= trade["target"]:
+                    if live_price <= trade["target2"]:
                         success_count += 1
                         successful_tickers.append(f"{ticker} (PUT 🔴)")
-                        msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (PUT) 🔴\n▪ سعر الدخول: ${trade['entry']}\n🔥 السعر الحالي: ${live_price}\n💰 أرباح الـ PUT!"
+                        msg = f"🎯 *صيدة ناجحة بالملي! سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (PUT) 🔴\n▪ سعر الدخول: ${trade['entry']}\n🔥 السعر الحالي: ${live_price}\n💰 حقق الهدف الثاني بنجاح!"
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
                     elif live_price >= trade["stop_loss"]:
                         failed_count += 1
                         failed_tickers.append(f"{ticker} (PUT 🔴)")
-                        msg = f"🛑 *وقف الخسارة الفني - سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (PUT) 🔴\n⚠️ ضرب قمة الوقف (${trade['stop_loss']})."
+                        msg = f"🛑 *صمام الأمان (وقف الخسارة) - سهم {ticker}*\n▪ صفقة رقم: #{trade['id']} (PUT) 🔴\n⚠️ ضرب الوقف (${trade['stop_loss']})."
                         send_telegram_message(msg)
                         active_trades.pop(ticker)
 
-        # --- 2. فحص الأسهم وإرسال الإشارات الفعلية ---
+        # --- 2. فحص الأسهم وإرسال الإشارات بالتصميم الجديد ---
         for ticker in WATCHLIST:
             if ticker in active_trades:
                 continue
@@ -202,8 +209,6 @@ def analyze_market_and_send():
                 is_call = (close > open_p) and (close > vwap) and (macd > sig) and (rvol >= 1.0)
                 is_put = (close < open_p) and (close < vwap) and (macd < sig) and (rvol >= 1.0)
                 
-                contract_duration = "عقود نفس اليوم (0DTE - تنتهي اليوم)" if ticker in ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "AMZN", "MSFT"] else "عقود قصيرة (1 إلى 2 أيام)"
-                
                 if is_call:
                     signal_counter += 1
                     entry_price = round(close, 2)
@@ -211,19 +216,28 @@ def analyze_market_and_send():
                     risk = round(entry_price - stop_loss, 2)
                     
                     if risk > 0:
-                        target = round(entry_price + (risk * 1.5), 2)
+                        target1 = round(entry_price + (risk * 1.0), 2)
+                        target2 = round(entry_price + (risk * 1.5), 2)
                         active_trades[ticker] = {
                             "id": signal_counter, "type": "CALL", "entry": entry_price,
-                            "target": target, "stop_loss": stop_loss
+                            "target1": target1, "target2": target2, "stop_loss": stop_loss
                         }
                         
                         msg = (
-                            f"🚀 *صفقة CALL مكثفة #{signal_counter}* 🚀\n"
-                            f"📌 السهم: `{ticker}` | فريم: `5m`\n"
-                            f"⏳ مدة العقد المقترحة: *{contract_duration}*\n"
-                            f"💵 الدخول: `{entry_price}$` | الوقف (قاع الشمعة): `{stop_loss}$`\n"
-                            f"🎯 الهدف: `{target}$` (RR 1.5)\n"
-                            f"⚡ RVOL: `{rvol:.2f}x` | RSI: `{rsi:.1f}`"
+                            f"🚀 *صفقة جديدة رقم #{signal_counter}* 🚀\n"
+                            f"📊 درجة الثقة: تأكيد صعود (درجة ممتازة 🟪)\n"
+                            f"📈 نسبة الصعود المتوقعة: +{(risk/entry_price)*100:.2f}%\n"
+                            f"📌 السهم: `{ticker}` | الاتجاه: CALL 🟢\n"
+                            f"💵 سعر دخول السهم: `{entry_price}$`\n"
+                            f"───────────────────\n"
+                            f"🎯 *المستهدفات (عقود 0DTE):*\n"
+                            f"• الهدف الأول: `{target1}$` | الهدف الثاني: `{target2}$`\n"
+                            f"🛑 صمام الأمان (الوقف تحت السعر): `{stop_loss}$`\n"
+                            f"───────────────────\n"
+                            f"⏳ المدى المتوقع للهدف: متوسطة (خلال جلسة تداول)\n"
+                            f"📅 التاريخ المستهدف بالملي: `{current_day}`\n"
+                            f"───────────────────\n"
+                            f"💬 تمت ملاحظة حركة ثابتة وقوية على أسهم `{ticker}`."
                         )
                         send_telegram_message(msg)
                         time.sleep(1)
@@ -235,19 +249,28 @@ def analyze_market_and_send():
                     risk = round(stop_loss - entry_price, 2)
                     
                     if risk > 0:
-                        target = round(entry_price - (risk * 1.5), 2)
+                        target1 = round(entry_price - (risk * 1.0), 2)
+                        target2 = round(entry_price - (risk * 1.5), 2)
                         active_trades[ticker] = {
                             "id": signal_counter, "type": "PUT", "entry": entry_price,
-                            "target": target, "stop_loss": stop_loss
+                            "target1": target1, "target2": target2, "stop_loss": stop_loss
                         }
                         
                         msg = (
-                            f"💥 *صفقة PUT مكثفة #{signal_counter}* 💥\n"
-                            f"📌 السهم: `{ticker}` | فريم: `5m`\n"
-                            f"⏳ مدة العقد المقترحة: *{contract_duration}*\n"
-                            f"💵 الدخول: `{entry_price}$` | الوقف (قمة الشمعة): `{stop_loss}$`\n"
-                            f"🎯 الهدف: `{target}$` (RR 1.5)\n"
-                            f"⚡ RVOL: `{rvol:.2f}x` | RSI: `{rsi:.1f}`"
+                            f"💥 *صفقة عكسية جديدة رقم #{signal_counter}* 💥\n"
+                            f"📊 درجة الثقة: تأكيد هبوط (درجة ممتازة 🟪)\n"
+                            f"📉 نسبة الهبوط المتوقعة: -{(risk/entry_price)*100:.2f}%\n"
+                            f"📌 السهم: `{ticker}` | الاتجاه: PUT 🔴\n"
+                            f"💵 سعر دخول السهم: `{entry_price}$`\n"
+                            f"───────────────────\n"
+                            f"🎯 *المستهدفات (عقود هبوط):*\n"
+                            f"• الهدف الأول: `{target1}$` | الهدف الثاني: `{target2}$`\n"
+                            f"🛑 صمام الأمان (الوقف فوق السعر): `{stop_loss}$`\n"
+                            f"───────────────────\n"
+                            f"⏳ المدى المتوقع للهدف: متوسطة (خلال جلسة تداول)\n"
+                            f"📅 التاريخ المستهدف بالملي: `{current_day}`\n"
+                            f"───────────────────\n"
+                            f"💬 تمت ملاحظة حركة ثابتة وقوية على أسهم `{ticker}`."
                         )
                         send_telegram_message(msg)
                         time.sleep(1)
@@ -280,7 +303,7 @@ if __name__ == "__main__":
     server_thread.start()
 
     try:
-        # إرسال صفقة التجربة فوراً دون انتظار جلب البيانات
+        # إرسال تجربة فورية بالتصميم الجديد للتأكد
         send_forced_test_signal()
     except Exception as e:
         print(f"Startup test signal error: {e}")
