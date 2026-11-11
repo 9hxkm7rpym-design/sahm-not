@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -20,12 +20,16 @@ active_trades = {}
 sent_signals = set()    
 signal_counter = 0      
 
+# --- سيرفر الويب الخفيف المخصص لاستجابة كرون بدون أخطاء ---
 class SimpleServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Options Radar Live & Active!")
+        self.wfile.write(b"OK - Cron Connected Successfully!")
+        
+    def log_message(self, format, *args):
+        return  # لمنع تلوث السجلات بطلبات متكررة
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -63,7 +67,6 @@ def analyze_market_and_send():
     global signal_counter
     
     while True:
-        # فحص مباشر وسريع لجميع الأسهم
         for ticker in WATCHLIST:
             if ticker in active_trades or ticker in sent_signals:
                 continue
@@ -73,7 +76,6 @@ def analyze_market_and_send():
                 change_val = market["change"]
                 entry_price = market["price"]
                 
-                # شروط عزم سريعة ومباشرة
                 if change_val > 0.5:
                     signal_counter += 1
                     target1 = round(entry_price * 1.01, 2)
@@ -131,11 +133,12 @@ def analyze_market_and_send():
         time.sleep(20)
 
 if __name__ == "__main__":
+    # تشغيل سيرفر الويب في خلفية مستقلة لخدمة الكرون بدون ضغط
     server_thread = threading.Thread(target=run_web_server, daemon=True)
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *تم تشغيل الرادار الداخلي المستقل بنجاح وجاهز للصيد الفوري!*")
+        send_telegram_message("⚡ *تم ضبط السيرفر واستجابة الكرون بنجاح تام!*")
     except:
         pass
         
