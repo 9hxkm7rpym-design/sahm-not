@@ -51,14 +51,21 @@ def get_real_market_data(ticker):
         response = requests.get(url, headers=headers, timeout=5)
         data = response.json()
         
-        current_price = data['chart']['result'][0]['meta']['regularMarketPrice']
-        previous_close = data['chart']['result'][0]['meta']['previousClose']
+        meta = data['chart']['result'][0]['meta']
+        current_price = meta['regularMarketPrice']
+        previous_close = meta['previousClose']
         change_percent = ((current_price - previous_close) / previous_close) * 100
+        
+        # محاولة جلب حجم التداول اللحظي لو متوفر
+        indicators = data['chart']['result'][0]['indicators']['quote'][0]
+        volumes = indicators.get('volume', [0])
+        current_volume = volumes[-1] if volumes and volumes[-1] else 0
         
         return {
             "success": True,
             "price": round(current_price, 2),
-            "change": round(change_percent, 2)
+            "change": round(change_percent, 2),
+            "volume": current_volume
         }
     except Exception as e:
         return {"success": False}
@@ -79,16 +86,18 @@ def analyze_market_and_send():
                 # درجة الصفقة وقوتها
                 if abs(change_val) >= 1.5:
                     grade = "A+ (عزم قوي جداً 🔥🔥🔥)"
+                    reason_power = "تدفق سيولة مؤسساتية ضخمة وانفجار سعري لحظي"
                 elif abs(change_val) >= 1.0:
                     grade = "A (عزم قوي ومستمر ⭐⭐⭐)"
+                    reason_power = "زخم شرائي/بيعي قوي مع استمرار السيولة"
                 else:
                     grade = "B+ (عزم خفيف وسريع ⭐⭐)"
+                    reason_power = "حركة زخم سريعة وبداية دخول سيولة لحظية"
                 
                 duration = "سريعة / Intraday (تُغلق قبل نهاية الجلسة)"
 
                 if change_val > 0.5:
                     signal_counter += 1
-                    # تحديد نطاق منطقة الدخول الصحيحة (من السعر الحالي إلى تحرك طفيف تحته لإعادة الاختبار)
                     entry_min = round(current_price * 0.998, 2)
                     entry_max = round(current_price * 1.002, 2)
                     
@@ -105,23 +114,24 @@ def analyze_market_and_send():
                     msg = (
                         f"🚀 *صفقة صعود فورية رقم #{signal_counter}*\n"
                         f"📌 *السهم:* `{ticker}` | *الاتجاه:* CALL 🟢\n"
+                        f"💵 *سعر السهم الحالي:* `${current_price}`\n"
                         f"📊 *التغير اللحظي:* +{change_val}%\n"
+                        f"🧠 *سبب الصفقة:* {reason_power}\n"
                         f"⭐ *درجة الصفقة:* {grade}\n"
                         f"⏳ *المدة المقترحة:* {duration}\n"
                         f"🎯 *منطقة الدخول الصحيحة:* `${entry_min}` ⟵ `${entry_max}`\n"
                         f"───────────────────\n"
                         f"🎯 *الأهداف:*\n"
                         f"• الهدف الأول: `${target1}` | الهدف الثاني: `${target2}`\n"
-                        f"🛑 *صمام الأمان (وقف الخسارة):* `${stop_loss}`\n"
+                        f"🛑 *وقف الخسارة:* `${stop_loss}`\n"
                         f"───────────────────\n"
-                        f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة بأكثر من 0.5%!"
+                        f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة!"
                     )
                     send_telegram_message(msg)
                     time.sleep(1)
                     
                 elif change_val < -0.5:
                     signal_counter += 1
-                    # تحديد نطاق منطقة الدخول الصحيحة للوضع الهبوطي
                     entry_min = round(current_price * 0.998, 2)
                     entry_max = round(current_price * 1.002, 2)
                     
@@ -138,14 +148,16 @@ def analyze_market_and_send():
                     msg = (
                         f"💥 *صفقة هبوط فورية رقم #{signal_counter}*\n"
                         f"📌 *السهم:* `{ticker}` | *الاتجاه:* PUT 🔴\n"
+                        f"💵 *سعر السهم الحالي:* `${current_price}`\n"
                         f"📊 *التغير اللحظي:* {change_val}%\n"
+                        f"🧠 *سبب الصفقة:* {reason_power} (ضغط بيعي)\n"
                         f"⭐ *درجة الصفقة:* {grade}\n"
                         f"⏳ *المدة المقترحة:* {duration}\n"
                         f"🎯 *منطقة الدخول الصحيحة:* `${entry_min}` ⟵ `${entry_max}`\n"
                         f"───────────────────\n"
                         f"🎯 *الأهداف:*\n"
                         f"• الهدف الأول: `${target1}` | الهدف الثاني: `${target2}`\n"
-                        f"🛑 *صمام الأمان (وقف الخسارة):* `${stop_loss}`\n"
+                        f"🛑 *وقف الخسارة:* `${stop_loss}`\n"
                         f"───────────────────\n"
                         f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة!"
                     )
@@ -159,7 +171,7 @@ if __name__ == "__main__":
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *تم تحديث الرادار بنجاح (إضافة مناطق الدخول الصحيحة والمحددة بدقة)!*")
+        send_telegram_message("⚡ *تم تحديث الرادار (إضافة سبب وطبيعة السيولة في كل صفقة)!*")
     except:
         pass
         
