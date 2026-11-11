@@ -20,7 +20,7 @@ active_trades = {}
 sent_signals = set()    
 signal_counter = 0      
 
-# --- سيرفر الويب الخفيف المخصص لاستجابة كرون بدون أخطاء ---
+# --- سيرفر الويب الخفيف لخدمة الكرون بدون أخطاء ---
 class SimpleServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -29,7 +29,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.wfile.write(b"OK - Cron Connected Successfully!")
         
     def log_message(self, format, *args):
-        return  # لمنع تلوث السجلات بطلبات متكررة
+        return
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -74,58 +74,80 @@ def analyze_market_and_send():
             market = get_real_market_data(ticker)
             if market.get("success"):
                 change_val = market["change"]
-                entry_price = market["price"]
+                current_price = market["price"]
                 
+                # درجة الصفقة وقوتها
+                if abs(change_val) >= 1.5:
+                    grade = "A+ (عزم قوي جداً 🔥🔥🔥)"
+                elif abs(change_val) >= 1.0:
+                    grade = "A (عزم قوي ومستمر ⭐⭐⭐)"
+                else:
+                    grade = "B+ (عزم خفيف وسريع ⭐⭐)"
+                
+                duration = "سريعة / Intraday (تُغلق قبل نهاية الجلسة)"
+
                 if change_val > 0.5:
                     signal_counter += 1
-                    target1 = round(entry_price * 1.01, 2)
-                    target2 = round(entry_price * 1.02, 2)
-                    stop_loss = round(entry_price * 0.985, 2)
+                    # تحديد نطاق منطقة الدخول الصحيحة (من السعر الحالي إلى تحرك طفيف تحته لإعادة الاختبار)
+                    entry_min = round(current_price * 0.998, 2)
+                    entry_max = round(current_price * 1.002, 2)
+                    
+                    target1 = round(current_price * 1.012, 2)
+                    target2 = round(current_price * 1.022, 2)
+                    stop_loss = round(current_price * 0.985, 2)
                     
                     active_trades[ticker] = {
-                        "id": signal_counter, "type": "CALL", "entry": entry_price,
+                        "id": signal_counter, "type": "CALL", "entry": current_price,
                         "target1": target1, "stop_loss": stop_loss
                     }
                     sent_signals.add(ticker)
                     
                     msg = (
                         f"🚀 *صفقة صعود فورية رقم #{signal_counter}*\n"
-                        f"📊 *التغير اللحظي:* +{change_val}%\n"
                         f"📌 *السهم:* `{ticker}` | *الاتجاه:* CALL 🟢\n"
-                        f"💵 *سعر الدخول:* `${entry_price}`\n"
+                        f"📊 *التغير اللحظي:* +{change_val}%\n"
+                        f"⭐ *درجة الصفقة:* {grade}\n"
+                        f"⏳ *المدة المقترحة:* {duration}\n"
+                        f"🎯 *منطقة الدخول الصحيحة:* `${entry_min}` ⟵ `${entry_max}`\n"
                         f"───────────────────\n"
                         f"🎯 *الأهداف:*\n"
                         f"• الهدف الأول: `${target1}` | الهدف الثاني: `${target2}`\n"
-                        f"🛑 *صمام الأمان:* `${stop_loss}`\n"
+                        f"🛑 *صمام الأمان (وقف الخسارة):* `${stop_loss}`\n"
                         f"───────────────────\n"
-                        f"🔥 عزم صعودي مرصود لايف!"
+                        f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة بأكثر من 0.5%!"
                     )
                     send_telegram_message(msg)
                     time.sleep(1)
                     
                 elif change_val < -0.5:
                     signal_counter += 1
-                    target1 = round(entry_price * 0.99, 2)
-                    target2 = round(entry_price * 0.98, 2)
-                    stop_loss = round(entry_price * 1.015, 2)
+                    # تحديد نطاق منطقة الدخول الصحيحة للوضع الهبوطي
+                    entry_min = round(current_price * 0.998, 2)
+                    entry_max = round(current_price * 1.002, 2)
+                    
+                    target1 = round(current_price * 0.988, 2)
+                    target2 = round(current_price * 0.978, 2)
+                    stop_loss = round(current_price * 1.015, 2)
                     
                     active_trades[ticker] = {
-                        "id": signal_counter, "type": "PUT", "entry": entry_price,
+                        "id": signal_counter, "type": "PUT", "entry": current_price,
                         "target1": target1, "stop_loss": stop_loss
                     }
                     sent_signals.add(ticker)
                     
                     msg = (
                         f"💥 *صفقة هبوط فورية رقم #{signal_counter}*\n"
-                        f"📊 *التغير اللحظي:* {change_val}%\n"
                         f"📌 *السهم:* `{ticker}` | *الاتجاه:* PUT 🔴\n"
-                        f"💵 *سعر الدخول:* `${entry_price}`\n"
+                        f"📊 *التغير اللحظي:* {change_val}%\n"
+                        f"⭐ *درجة الصفقة:* {grade}\n"
+                        f"⏳ *المدة المقترحة:* {duration}\n"
+                        f"🎯 *منطقة الدخول الصحيحة:* `${entry_min}` ⟵ `${entry_max}`\n"
                         f"───────────────────\n"
                         f"🎯 *الأهداف:*\n"
                         f"• الهدف الأول: `${target1}` | الهدف الثاني: `${target2}`\n"
-                        f"🛑 *صمام الأمان:* `${stop_loss}`\n"
+                        f"🛑 *صمام الأمان (وقف الخسارة):* `${stop_loss}`\n"
                         f"───────────────────\n"
-                        f"📉 ضغط بيعي مرصود لايف!"
+                        f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة!"
                     )
                     send_telegram_message(msg)
                     time.sleep(1)
@@ -133,12 +155,11 @@ def analyze_market_and_send():
         time.sleep(20)
 
 if __name__ == "__main__":
-    # تشغيل سيرفر الويب في خلفية مستقلة لخدمة الكرون بدون ضغط
     server_thread = threading.Thread(target=run_web_server, daemon=True)
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *تم ضبط السيرفر واستجابة الكرون بنجاح تام!*")
+        send_telegram_message("⚡ *تم تحديث الرادار بنجاح (إضافة مناطق الدخول الصحيحة والمحددة بدقة)!*")
     except:
         pass
         
