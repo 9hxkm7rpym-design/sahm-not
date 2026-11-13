@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, time as dtime
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -64,16 +64,30 @@ def get_real_market_data(ticker):
     except Exception as e:
         return {"success": False}
 
+def is_market_open():
+    """ التحقق بدقة من ساعات التداول الرسمية للسوق الأمريكي (التوقيت الشتوي: 5:30 عصراً - 12:00 ليلاً) ومن الإثنين للجمعة """
+    now = datetime.now()
+    weekday = now.weekday() # 0 = الإثنين إلى 4 = الجمعة
+    
+    if weekday >= 5: # السبت والأحد إجازة
+        return False
+        
+    current_time = now.time()
+    market_start = dtime(17, 30) # 5:30 عصراً
+    market_end = dtime(0, 0)     # 12:00 ليلاً (بداية اليوم التالي)
+    
+    # السوق مفتوح بين 5:30 عصراً و 12:00 ليلاً
+    if current_time >= market_start or current_time <= market_end:
+        return True
+    return False
+
 def analyze_market_and_send():
     global signal_counter, daily_stats
     
     while True:
-        current_time = datetime.now()
-        weekday = current_time.weekday() # 0 إلى 4 يعني من الإثنين إلى الجمعة
-        
-        # إذا كان اليوم السبت أو الأحد (عطلة السوق)، البوت ينتظر ولا يستهلك طاقة
-        if weekday >= 5:
-            time.sleep(300)
+        # فحص هل السوق مفتوح أم لا (إذا مغلق، البوت لا يرسل صفقات أبداً)
+        if not is_market_open():
+            time.sleep(60)
             continue
 
         # 1. متابعة الأهداف ووقف الخسارة بدقة لحظية للصفقات المفتوحة
@@ -117,7 +131,7 @@ def analyze_market_and_send():
             elif spy_market["change"] < -0.2:
                 market_trend = "BEARISH"
 
-        # 3. اصطياد الفرص خلال أ ساعات الجلسة الشتوية
+        # 3. اصطياد الفرص أثناء ساعات العمل الرسمية فقط
         for ticker in WATCHLIST:
             if ticker in active_trades or ticker in sent_signals or ticker == "SPY":
                 continue
@@ -129,13 +143,13 @@ def analyze_market_and_send():
                 
                 if abs(change_val) >= 1.8:
                     
-                    # التصنيف وتحديد المرونة
+                    # التصنيف بالعربي بالكامل وبدون إنجليزية ملخبطة
                     if abs(change_val) >= 2.5:
-                        grade = "النخبة (Elite - A+) 🔥 (عزم مؤسساتي خارق)"
+                        grade = "🔥 النخبة (درجة A+) - عزم مؤسساتي خارق"
                         duration = "سكالبينج سريع ومضمون (5 إلى 15 دقيقة)"
-                        is_elite = True  # صفقات النخبة تتجاوز اتجاه السوق وتدخل فوراً
+                        is_elite = True  
                     else:
-                        grade = "ممتاز (Strong - A) ⭐ (زخم قوي مؤكد)"
+                        grade = "⭐ ممتاز (درجة A) - زخم قوي مؤكد"
                         duration = "تداول لحظي (15 إلى 30 دقيقة)"
                         is_elite = False
 
@@ -217,7 +231,7 @@ if __name__ == "__main__":
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *البوت جاهز ومنطلق بأعلى معايير القنص (التوقيت الشتوي، عمل طوال أيام الاسبوع من الإثنين للجمعة، وبذكاء مرن للنخبة والممتاز)!*")
+        send_telegram_message("⚡ *تم قفل البوت ليعمل حصرياً داخل ساعات تداول السوق الأمريكي (5:30 عصراً - 12:00 ليلاً)، وتعريب التقييمات لتكون نظيفة 100%!*")
     except:
         pass
         
