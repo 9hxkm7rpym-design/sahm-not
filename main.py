@@ -16,11 +16,11 @@ WATCHLIST = [
     "ROKU", "SPY", "SQ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
-active_trades = {}      
-sent_signals = set()    
+active_trades = {}
+sent_signals = set()
 signal_counter = 0      
+daily_stats = {"wins": 0, "losses": 0}
 
-# --- سيرفر الويب الخفيف لخدمة الكرون بدون أخطاء ---
 class SimpleServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -56,26 +56,70 @@ def get_real_market_data(ticker):
         previous_close = meta['previousClose']
         change_percent = ((current_price - previous_close) / previous_close) * 100
         
-        # محاولة جلب حجم التداول اللحظي لو متوفر
-        indicators = data['chart']['result'][0]['indicators']['quote'][0]
-        volumes = indicators.get('volume', [0])
-        current_volume = volumes[-1] if volumes and volumes[-1] else 0
-        
         return {
             "success": True,
             "price": round(current_price, 2),
-            "change": round(change_percent, 2),
-            "volume": current_volume
+            "change": round(change_percent, 2)
         }
     except Exception as e:
         return {"success": False}
 
 def analyze_market_and_send():
-    global signal_counter
+    global signal_counter, daily_stats
     
     while True:
+        current_time = datetime.now()
+        weekday = current_time.weekday() # 0 إلى 4 يعني من الإثنين إلى الجمعة
+        
+        # إذا كان اليوم السبت أو الأحد (عطلة السوق)، البوت ينتظر ولا يستهلك طاقة
+        if weekday >= 5:
+            time.sleep(300)
+            continue
+
+        # 1. متابعة الأهداف ووقف الخسارة بدقة لحظية للصفقات المفتوحة
+        tickers_to_remove = []
+        for ticker, trade in active_trades.items():
+            market = get_real_market_data(ticker)
+            if market.get("success"):
+                current_price = market["price"]
+                trade_type = trade["type"]
+                target1 = trade["target1"]
+                stop_loss = trade["stop_loss"]
+                
+                if trade_type == "CALL":
+                    if current_price >= target1:
+                        daily_stats["wins"] += 1
+                        send_telegram_message(f"🎯 *هدف محقق بنجاح! (+)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}`\n• الحالة: تم تحقيق الهدف الأول ✅")
+                        tickers_to_remove.append(ticker)
+                    elif current_price <= stop_loss:
+                        daily_stats["losses"] += 1
+                        send_telegram_message(f"🛑 *وقف خسارة (-)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}`\n• الحالة: تم ضرب وقف الخسارة لحماية رأس المال ❌")
+                        tickers_to_remove.append(ticker)
+                elif trade_type == "PUT":
+                    if current_price <= target1:
+                        daily_stats["wins"] += 1
+                        send_telegram_message(f"🎯 *هدف محقق بنجاح! (+)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}`\n• الحالة: تم تحقيق الهدف الأول ✅")
+                        tickers_to_remove.append(ticker)
+                    elif current_price >= stop_loss:
+                        daily_stats["losses"] += 1
+                        send_telegram_message(f"🛑 *وقف خسارة (-)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}`\n• الحالة: تم ضرب وقف الخسارة لحماية رأس المال ❌")
+                        tickers_to_remove.append(ticker)
+                        
+        for t in tickers_to_remove:
+            del active_trades[t]
+
+        # 2. فحص اتجاه السوق العام (SPY) بمرونة ذكية
+        spy_market = get_real_market_data("SPY")
+        market_trend = "NEUTRAL"
+        if spy_market.get("success"):
+            if spy_market["change"] > 0.2:
+                market_trend = "BULLISH"
+            elif spy_market["change"] < -0.2:
+                market_trend = "BEARISH"
+
+        # 3. اصطياد الفرص خلال أ ساعات الجلسة الشتوية
         for ticker in WATCHLIST:
-            if ticker in active_trades or ticker in sent_signals:
+            if ticker in active_trades or ticker in sent_signals or ticker == "SPY":
                 continue
                 
             market = get_real_market_data(ticker)
@@ -83,95 +127,97 @@ def analyze_market_and_send():
                 change_val = market["change"]
                 current_price = market["price"]
                 
-                # درجة الصفقة وقوتها
-                if abs(change_val) >= 1.5:
-                    grade = "A+ (عزم قوي جداً 🔥🔥🔥)"
-                    reason_power = "تدفق سيولة مؤسساتية ضخمة وانفجار سعري لحظي"
-                elif abs(change_val) >= 1.0:
-                    grade = "A (عزم قوي ومستمر ⭐⭐⭐)"
-                    reason_power = "زخم شرائي/بيعي قوي مع استمرار السيولة"
-                else:
-                    grade = "B+ (عزم خفيف وسريع ⭐⭐)"
-                    reason_power = "حركة زخم سريعة وبداية دخول سيولة لحظية"
-                
-                duration = "سريعة / Intraday (تُغلق قبل نهاية الجلسة)"
+                if abs(change_val) >= 1.8:
+                    
+                    # التصنيف وتحديد المرونة
+                    if abs(change_val) >= 2.5:
+                        grade = "النخبة (Elite - A+) 🔥 (عزم مؤسساتي خارق)"
+                        duration = "سكالبينج سريع ومضمون (5 إلى 15 دقيقة)"
+                        is_elite = True  # صفقات النخبة تتجاوز اتجاه السوق وتدخل فوراً
+                    else:
+                        grade = "ممتاز (Strong - A) ⭐ (زخم قوي مؤكد)"
+                        duration = "تداول لحظي (15 إلى 30 دقيقة)"
+                        is_elite = False
 
-                if change_val > 0.5:
-                    signal_counter += 1
-                    entry_min = round(current_price * 0.998, 2)
-                    entry_max = round(current_price * 1.002, 2)
-                    
-                    target1 = round(current_price * 1.012, 2)
-                    target2 = round(current_price * 1.022, 2)
-                    stop_loss = round(current_price * 0.985, 2)
-                    
-                    active_trades[ticker] = {
-                        "id": signal_counter, "type": "CALL", "entry": current_price,
-                        "target1": target1, "stop_loss": stop_loss
-                    }
-                    sent_signals.add(ticker)
-                    
-                    msg = (
-                        f"🚀 *صفقة صعود فورية رقم #{signal_counter}*\n"
-                        f"📌 *السهم:* `{ticker}` | *الاتجاه:* CALL 🟢\n"
-                        f"💵 *سعر السهم الحالي:* `${current_price}`\n"
-                        f"📊 *التغير اللحظي:* +{change_val}%\n"
-                        f"🧠 *سبب الصفقة:* {reason_power}\n"
-                        f"⭐ *درجة الصفقة:* {grade}\n"
-                        f"⏳ *المدة المقترحة:* {duration}\n"
-                        f"🎯 *منطقة الدخول الصحيحة:* `${entry_min}` ⟵ `${entry_max}`\n"
-                        f"───────────────────\n"
-                        f"🎯 *الأهداف:*\n"
-                        f"• الهدف الأول: `${target1}` | الهدف الثاني: `${target2}`\n"
-                        f"🛑 *وقف الخسارة:* `${stop_loss}`\n"
-                        f"───────────────────\n"
-                        f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة!"
-                    )
-                    send_telegram_message(msg)
-                    time.sleep(1)
-                    
-                elif change_val < -0.5:
-                    signal_counter += 1
-                    entry_min = round(current_price * 0.998, 2)
-                    entry_max = round(current_price * 1.002, 2)
-                    
-                    target1 = round(current_price * 0.988, 2)
-                    target2 = round(current_price * 0.978, 2)
-                    stop_loss = round(current_price * 1.015, 2)
-                    
-                    active_trades[ticker] = {
-                        "id": signal_counter, "type": "PUT", "entry": current_price,
-                        "target1": target1, "stop_loss": stop_loss
-                    }
-                    sent_signals.add(ticker)
-                    
-                    msg = (
-                        f"💥 *صفقة هبوط فورية رقم #{signal_counter}*\n"
-                        f"📌 *السهم:* `{ticker}` | *الاتجاه:* PUT 🔴\n"
-                        f"💵 *سعر السهم الحالي:* `${current_price}`\n"
-                        f"📊 *التغير اللحظي:* {change_val}%\n"
-                        f"🧠 *سبب الصفقة:* {reason_power} (ضغط بيعي)\n"
-                        f"⭐ *درجة الصفقة:* {grade}\n"
-                        f"⏳ *المدة المقترحة:* {duration}\n"
-                        f"🎯 *منطقة الدخول الصحيحة:* `${entry_min}` ⟵ `${entry_max}`\n"
-                        f"───────────────────\n"
-                        f"🎯 *الأهداف:*\n"
-                        f"• الهدف الأول: `${target1}` | الهدف الثاني: `${target2}`\n"
-                        f"🛑 *وقف الخسارة:* `${stop_loss}`\n"
-                        f"───────────────────\n"
-                        f"💡 *تنبيه:* لا تدخل إذا ابتعد السعر عن منطقة الدخول المحددة!"
-                    )
-                    send_telegram_message(msg)
-                    time.sleep(1)
+                    # فلترة صفقات "ممتاز" مع اتجاه السوق العام
+                    if not is_elite:
+                        if change_val > 0 and market_trend == "BEARISH":
+                            continue
+                        if change_val < 0 and market_trend == "BULLISH":
+                            continue
 
-        time.sleep(20)
+                    if change_val > 0:
+                        signal_counter += 1
+                        entry_min = round(current_price * 0.998, 2)
+                        entry_max = round(current_price * 1.002, 2)
+                        target1 = round(current_price * 1.015, 2)
+                        target2 = round(current_price * 1.025, 2)
+                        stop_loss = round(current_price * 0.988, 2)
+                        
+                        active_trades[ticker] = {
+                            "id": signal_counter, "type": "CALL", "entry": current_price,
+                            "target1": target1, "stop_loss": stop_loss
+                        }
+                        sent_signals.add(ticker)
+                        
+                        msg = (
+                            f"🔥 *فرصة عالية الدقة #{signal_counter}*\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *السهم:* `{ticker}`\n"
+                            f"📈 *النوع:* `CALL (صعود) 🟢`\n"
+                            f"💵 *السعر الحالي:* `${current_price}` (+{change_val}%)\n"
+                            f"🏆 *التقييم:* `{grade}`\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n"
+                            f"🎯 *منطقة الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
+                            f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
+                            f"🛑 *وقف الخسارة:* `${stop_loss}`\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏳ *المدة المقترحة:* `{duration}`\n"
+                            f"⚠️ *تنبيه هام:* إغلاق إجباري قبل نهاية الجلسة الشتوية!"
+                        )
+                        send_telegram_message(msg)
+                        time.sleep(1)
+                        
+                    elif change_val < 0:
+                        signal_counter += 1
+                        entry_min = round(current_price * 0.998, 2)
+                        entry_max = round(current_price * 1.002, 2)
+                        target1 = round(current_price * 0.985, 2)
+                        target2 = round(current_price * 0.975, 2)
+                        stop_loss = round(current_price * 1.012, 2)
+                        
+                        active_trades[ticker] = {
+                            "id": signal_counter, "type": "PUT", "entry": current_price,
+                            "target1": target1, "stop_loss": stop_loss
+                        }
+                        sent_signals.add(ticker)
+                        
+                        msg = (
+                            f"🔥 *فرصة عالية الدقة #{signal_counter}*\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *السهم:* `{ticker}`\n"
+                            f"📉 *النوع:* `PUT (هبوط) 🔴`\n"
+                            f"💵 *السعر الحالي:* `${current_price}` ({change_val}%)\n"
+                            f"🏆 *التقييم:* `{grade}`\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n"
+                            f"🎯 *منطقة الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
+                            f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
+                            f"🛑 *وقف الخسارة:* `${stop_loss}`\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n"
+                            f"⏳ *المدة المقترحة:* `{duration}`\n"
+                            f"⚠️ *تنبيه هام:* إغلاق إجباري قبل نهاية الجلسة الشتوية!"
+                        )
+                        send_telegram_message(msg)
+                        time.sleep(1)
+
+        time.sleep(30)
 
 if __name__ == "__main__":
     server_thread = threading.Thread(target=run_web_server, daemon=True)
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *تم تحديث الرادار (إضافة سبب وطبيعة السيولة في كل صفقة)!*")
+        send_telegram_message("⚡ *البوت جاهز ومنطلق بأعلى معايير القنص (التوقيت الشتوي، عمل طوال أيام الاسبوع من الإثنين للجمعة، وبذكاء مرن للنخبة والممتاز)!*")
     except:
         pass
         
