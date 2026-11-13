@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta, timezone
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -65,16 +65,17 @@ def get_real_market_data(ticker):
         return {"success": False}
 
 def is_market_open():
-    """ التحقق بدقة من ساعات التداول الرسمية للسوق الأمريكي (التوقيت الشتوي: 5:30 عصراً - 12:00 ليلاً) ومن الإثنين للجمعة """
-    now = datetime.now()
-    weekday = now.weekday() # 0 = الإثنين إلى 4 = الجمعة
+    """ التحقق بدقة من توقيت السعودية (UTC+3) وساعات السوق الأمريكي الشتوية (5:30 عصراً - 12:00 ليلاً) ومن الإثنين للجمعة """
+    # ضبط الوقت بتوقيت المملكة العربية السعودية (UTC+3) بشكل دقيق وثابت
+    ksa_time = datetime.now(timezone(timedelta(hours=3)))
+    weekday = ksa_time.weekday() # 0 = الإثنين إلى 4 = الجمعة
     
     if weekday >= 5: # السبت والأحد إجازة
         return False
         
-    current_time = now.time()
+    current_time = ksa_time.time()
     market_start = dtime(17, 30) # 5:30 عصراً
-    market_end = dtime(0, 0)     # 12:00 ليلاً (بداية اليوم التالي)
+    market_end = dtime(0, 0)     # 12:00 ليلاً
     
     # السوق مفتوح بين 5:30 عصراً و 12:00 ليلاً
     if current_time >= market_start or current_time <= market_end:
@@ -85,7 +86,7 @@ def analyze_market_and_send():
     global signal_counter, daily_stats
     
     while True:
-        # فحص هل السوق مفتوح أم لا (إذا مغلق، البوت لا يرسل صفقات أبداً)
+        # فحص هل السوق مفتوح أم لا بتوقيت السعودية الصحيح
         if not is_market_open():
             time.sleep(60)
             continue
@@ -231,7 +232,7 @@ if __name__ == "__main__":
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *تم قفل البوت ليعمل حصرياً داخل ساعات تداول السوق الأمريكي (5:30 عصراً - 12:00 ليلاً)، وتعريب التقييمات لتكون نظيفة 100%!*")
+        send_telegram_message("⚡ *تم ضبط توقيت السعودية (UTC+3) بدقة تامة؛ البوت الآن مربوط حصرياً بساعات تداول السوق الأمريكي الرسمية ولن يرسل شيئاً خارجها!*")
     except:
         pass
         
