@@ -27,7 +27,7 @@ class SimpleServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"OK - Ultimate High Win-Rate & Active Bot Connected!")
+        self.wfile.write(b"OK - Ultimate Active & Win-Rate Bot Connected!")
         
     def log_message(self, format, *args):
         return
@@ -61,11 +61,6 @@ def get_real_market_data(ticker):
         
         lows = [l for l in indicators.get('low', []) if l is not None]
         highs = [h for h in indicators.get('high', []) if h is not None]
-        volumes = [v for v in indicators.get('volume', []) if v is not None]
-        
-        # فلتر السيولة الذكي لضمان نجاح الصفقة وقوتها
-        avg_volume = sum(volumes) / len(volumes) if volumes else 0
-        latest_volume = volumes[-1] if volumes else 0
         
         recent_low = min(lows[-15:]) if lows else current_price * 0.98
         recent_high = max(highs[-15:]) if highs else current_price * 1.02
@@ -79,9 +74,7 @@ def get_real_market_data(ticker):
             "change": round(change_percent, 2),
             "recent_low": round(recent_low, 2),
             "recent_high": round(recent_high, 2),
-            "avg_candle": max(avg_candle_movement, 0.05),
-            # شرط سيولة ذكي يضمن أن الحركة وراها حجم حقيقي ترفع نسبة النجاح
-            "high_win_volume": latest_volume > (avg_volume * 1.1) 
+            "avg_candle": max(avg_candle_movement, 0.05)
         }
     except Exception as e:
         return {"success": False}
@@ -91,21 +84,12 @@ def calculate_real_chart_duration(current_price, target_price, avg_candle):
     estimated_candles = distance / avg_candle
     
     if estimated_candles <= 15:
-        return f"خلال سياق لحظي سريع (متوقع خلال {round(estimated_candles)} إلى {round(estimated_candles*1.5)} دقيقة بناءً على الشارت)"
+        return f"خلال سياق لحظي سريع (متوقع خلال {round(estimated_candles)} دقيقة)"
     elif estimated_candles <= 60:
         hours = round(estimated_candles / 60, 1)
-        return f"خلال الجلسة الحالية (متوقع خلال {hours} إلى {round(hours*1.5, 1)} ساعة من الشارت)"
-    elif estimated_candles <= 240:
-        hours = round(estimated_candles / 60)
-        return f"خلال ساعات التداول (متوقع خلال {hours} إلى {hours+2} ساعات)"
+        return f"خلال الجلسة الحالية (متوقع خلال {hours} ساعة)"
     else:
-        days = round(estimated_candles / 390, 1)
-        if days <= 1:
-            return "خلال يوم تداول واحد (بناءً على مسافة الشارت)"
-        elif days <= 2:
-            return "خلال يوم إلى يومين (بناءً على مسافة الشارت)"
-        else:
-            return f"خلال {round(days)} أيام تقريباً (حسب حركة الشارت الفنية)"
+        return "خلال تداولات الجلسة"
 
 def get_ksa_time():
     return datetime.now(timezone(timedelta(hours=3)))
@@ -137,22 +121,6 @@ def analyze_market_and_send():
                 report_sent_today = False
 
         if not is_market_open():
-            if not report_sent_today and len(active_trades) > 0 and ksa_time.time() >= dtime(0, 5):
-                total_trades = daily_stats['wins'] + daily_stats['losses']
-                win_rate = round((daily_stats['wins'] / total_trades) * 100, 1) if total_trades > 0 else 0
-                summary_msg = (
-                    f"📊 *تقرير أداء المحفظة الختامي*\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n"
-                    f"✅ *الأهداف المحققة:* `{daily_stats['wins']}`\n"
-                    f"❌ *وقف الخسارة:* `{daily_stats['losses']}`\n"
-                    f"🎯 *نسبة النجاح الكلية:* `{win_rate}%`\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n"
-                    f"🦅 *تم إغلاق كافة الصفقات لتأمين الأرباح بنهاية الجلسة.*"
-                )
-                send_telegram_message(summary_msg)
-                active_trades.clear()
-                report_sent_today = True
-                
             time.sleep(60)
             continue
 
@@ -169,28 +137,26 @@ def analyze_market_and_send():
                 if trade_type == "CALL":
                     if current_price >= target1:
                         daily_stats["wins"] += 1
-                        send_telegram_message(f"🎯 *هدف محقق باحترافية عالية! (+)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}`\n• الحالة: تم تحقيق المستهدف الأول بنجاح ✅")
+                        send_telegram_message(f"🎯 *هدف محقق باحترافية! (+)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}` ✅")
                         tickers_to_remove.append(ticker)
                     elif current_price <= stop_loss:
                         daily_stats["losses"] += 1
-                        send_telegram_message(f"🛑 *وقف خسارة فني (-)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}`\n• الحالة: تم كسر القاع الفني وضرب وقف الخسارة ❌")
+                        send_telegram_message(f"🛑 *وقف خسارة فني (-)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}` ❌")
                         tickers_to_remove.append(ticker)
                 elif trade_type == "PUT":
-                    if current_price >= target1: # ملاحظة: الـ PUT هدفه تحت السعر
-                        pass
                     if current_price <= target1:
                         daily_stats["wins"] += 1
-                        send_telegram_message(f"🎯 *هدف محقق باحترافية عالية! (+)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}`\n• الحالة: تم تحقيق المستهدف الأول بنجاح ✅")
+                        send_telegram_message(f"🎯 *هدف محقق باحترافية! (+)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}` ✅")
                         tickers_to_remove.append(ticker)
                     elif current_price >= stop_loss:
                         daily_stats["losses"] += 1
-                        send_telegram_message(f"🛑 *وقف خسارة فني (-)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}`\n• الحالة: تم اختراق القمة الفنية وضرب وقف الخسارة ❌")
+                        send_telegram_message(f"🛑 *وقف خسارة فني (-)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}` ❌")
                         tickers_to_remove.append(ticker)
                         
         for t in tickers_to_remove:
             del active_trades[t]
 
-        # 2. معادلة الدمج الخارقة: سرعة (1.5%) + فلتر سيولة يضمن نسبة نجاح عالية جداً + وقف فني ذكي
+        # 2. فحص نشط جداً (0.8%) لتدفق الصفقات مع أمان الوقف الفني
         for ticker in WATCHLIST:
             if ticker in active_trades or ticker in sent_signals:
                 continue
@@ -202,85 +168,70 @@ def analyze_market_and_send():
                 recent_low = market["recent_low"]
                 recent_high = market["recent_high"]
                 avg_candle = market["avg_candle"]
-                high_win_volume = market["high_win_volume"]
                 
-                # شرط الحركة (1.5% صعوداً أو هبوطاً) + فلتر السيولة المضمون لنسبة النجاح
-                if abs(change_val) >= 1.5 and high_win_volume:
+                if change_val >= 0.8:
+                    signal_counter += 1
+                    grade = "🔥 صفقة نخبة (درجة A+)" if change_val >= 2.0 else "⭐ صفقة نشطة (درجة A)"
                     
-                    if abs(change_val) >= 2.5:
-                        grade = "🔥 صفقة نخبة ذهبية (نسبة نجاح فائقة A++)"
-                    else:
-                        grade = "⭐ صفقة احترافية عالية الثقة (درجة A+)"
-
-                    if change_val > 0:
-                        signal_counter += 1
-                        entry_min = round(current_price * 0.998, 2)
-                        entry_max = round(current_price * 1.002, 2)
-                        target1 = round(current_price * 1.018, 2)
-                        target2 = round(current_price * 1.030, 2)
-                        # وقف فني ذكي ومحمي
-                        stop_loss = round(min(recent_low, current_price * 0.985), 2)
-                        
-                        dynamic_duration = calculate_real_chart_duration(current_price, target1, avg_candle)
-                        
-                        active_trades[ticker] = {
-                            "id": signal_counter, "type": "CALL", "entry": current_price,
-                            "target1": target1, "stop_loss": stop_loss
-                        }
-                        sent_signals.add(ticker)
-                        
-                        msg = (
-                            f"🚀 *فرصة أوبشن خارقة #{signal_counter}*\n"
-                            f"━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 *السهم:* `{ticker}`\n"
-                            f"📈 *النوع:* `CALL (صعود) 🟢`\n"
-                            f"💵 *السعر الحالي:* `${current_price}` (+{change_val}%)\n"
-                            f"🏆 *التقييم:* `{grade}`\n"
-                            f"━━━━━━━━━━━━━━━━━━━\n"
-                            f"🎯 *منطقة الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
-                            f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
-                            f"🛑 *وقف الخسارة الفني الذكي:* `${stop_loss}`\n"
-                            f"━━━━━━━━━━━━━━━━━━━\n"
-                            f"⏳ *التقدير الزمني (مستخرج من الشارت):* `{dynamic_duration}`\n"
-                            f"⚡ *ملاحظة:* صيدة سريعة ومضمونة بفلتر سيولة عالي النجاح."
-                        )
-                        send_telegram_message(msg)
-                        time.sleep(1)
-                        
-                    elif change_val < 0:
-                        signal_counter += 1
-                        entry_min = round(current_price * 0.998, 2)
-                        entry_max = round(current_price * 1.002, 2)
-                        target1 = round(current_price * 0.982, 2)
-                        target2 = round(current_price * 0.970, 2)
-                        # وقف فني ذكي ومحمي
-                        stop_loss = round(max(recent_high, current_price * 1.015), 2)
-                        
-                        dynamic_duration = calculate_real_chart_duration(current_price, target1, avg_candle)
-                        
-                        active_trades[ticker] = {
-                            "id": signal_counter, "type": "PUT", "entry": current_price,
-                            "target1": target1, "stop_loss": stop_loss
-                        }
-                        sent_signals.add(ticker)
-                        
-                        msg = (
-                            f"🚀 *فرصة أوبشن خارقة #{signal_counter}*\n"
-                            f"━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 *السهم:* `{ticker}`\n"
-                            f"📉 *النوع:* `PUT (هبوط) 🔴`\n"
-                            f"💵 *السعر الحالي:* `${current_price}` ({change_val}%)\n"
-                            f"🏆 *التقييم:* `{grade}`\n"
-                            f"━━━━━━━━━━━━━━━━━━━\n"
-                            f"🎯 *منطقة الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
-                            f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
-                            f"🛑 *وقف الخسارة الفني الذكي:* `${stop_loss}`\n"
-                            f"━━━━━━━━━━━━━━━━━━━\n"
-                            f"⏳ *التقدير الزمني (مستخرج من الشارت):* `{dynamic_duration}`\n"
-                            f"⚡ *ملاحظة:* صيدة سريعة ومضمونة بفلتر سيولة عالي النجاح."
-                        )
-                        send_telegram_message(msg)
-                        time.sleep(1)
+                    entry_min = round(current_price * 0.998, 2)
+                    entry_max = round(current_price * 1.002, 2)
+                    target1 = round(current_price * 1.012, 2)
+                    target2 = round(current_price * 1.020, 2)
+                    stop_loss = round(min(recent_low, current_price * 0.985), 2)
+                    
+                    dynamic_duration = calculate_real_chart_duration(current_price, target1, avg_candle)
+                    
+                    active_trades[ticker] = {
+                        "id": signal_counter, "type": "CALL", "entry": current_price,
+                        "target1": target1, "stop_loss": stop_loss
+                    }
+                    sent_signals.add(ticker)
+                    
+                    msg = (
+                        f"🚀 *فرصة أوبشن نشطة #{signal_counter}*\n"
+                        f"━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 *السهم:* `{ticker}` | `CALL (صعود) 🟢`\n"
+                        f"💵 *السعر الحالي:* `${current_price}` (+{change_val}%)\n"
+                        f"🏆 *التقييم:* `{grade}`\n"
+                        f"🎯 *الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
+                        f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
+                        f"🛑 *الوقف الذكي الفني:* `${stop_loss}`\n"
+                        f"⏳ *المدى الزمني:* `{dynamic_duration}`"
+                    )
+                    send_telegram_message(msg)
+                    time.sleep(1)
+                    
+                elif change_val <= -0.8:
+                    signal_counter += 1
+                    grade = "🔥 صفقة نخبة (درجة A+)" if change_val <= -2.0 else "⭐ صفقة نشطة (درجة A)"
+                    
+                    entry_min = round(current_price * 0.998, 2)
+                    entry_max = round(current_price * 1.002, 2)
+                    target1 = round(current_price * 0.988, 2)
+                    target2 = round(current_price * 0.980, 2)
+                    stop_loss = round(max(recent_high, current_price * 1.015), 2)
+                    
+                    dynamic_duration = calculate_real_chart_duration(current_price, target1, avg_candle)
+                    
+                    active_trades[ticker] = {
+                        "id": signal_counter, "type": "PUT", "entry": current_price,
+                        "target1": target1, "stop_loss": stop_loss
+                    }
+                    sent_signals.add(ticker)
+                    
+                    msg = (
+                        f"🚀 *فرصة أوبشن نشطة #{signal_counter}*\n"
+                        f"━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 *السهم:* `{ticker}` | `PUT (هبوط) 🔴`\n"
+                        f"💵 *السعر الحالي:* `${current_price}` ({change_val}%)\n"
+                        f"🏆 *التقييم:* `{grade}`\n"
+                        f"🎯 *الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
+                        f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
+                        f"🛑 *الوقف الذكي الفني:* `${stop_loss}`\n"
+                        f"⏳ *المدى الزمني:* `{dynamic_duration}`"
+                    )
+                    send_telegram_message(msg)
+                    time.sleep(1)
 
         time.sleep(30)
 
@@ -289,7 +240,7 @@ if __name__ == "__main__":
     server_thread.start()
     
     try:
-        send_telegram_message("⚡ *تم تفعيل النسخة الأسطورية المدمجة: كثرة صفقات سريعة (1.5%) + فلتر سيولة مؤسساتي لنسبة نجاح خارقة + وقف فني ذكي!*")
+        send_telegram_message("⚡ *تم تشغيل النسخة النشطة المتوازنة: صفقات سريعة متدفقة + وقف فني ذكي يحمي رأس المال!*")
     except:
         pass
         
