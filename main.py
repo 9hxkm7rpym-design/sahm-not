@@ -104,11 +104,11 @@ def fetch_quote_and_analysis(ticker):
         highs = [h for h in (quote.get("high") or []) if h is not None]
         volumes = [v for v in (quote.get("volume") or []) if v is not None]
 
-        if len(closes) < 5:
+        if len(closes) < 2:
             return None
 
         pct = ((price - prev_close) / prev_close) * 100
-        ma_fast = sum(closes[-5:]) / 5
+        ma_fast = sum(closes[-5:]) / min(len(closes), 5)
         ma_slow = sum(closes[-15:]) / min(len(closes), 15)
 
         avg_vol = (sum(volumes[:-1]) / max(1, len(volumes) - 1)) if len(volumes) > 1 else 0
@@ -240,6 +240,7 @@ def monitor_active_trades():
 def scan_new_setups():
     global signal_count, last_heartbeat_ts
     ok_count = 0
+    missing = []
     top_move = ("-", 0.0)
 
     for ticker in WATCHLIST:
@@ -247,6 +248,7 @@ def scan_new_setups():
             q = fetch_quote_and_analysis(ticker)
             time.sleep(0.1)
             if not q:
+                missing.append(ticker)
                 continue
             ok_count += 1
 
@@ -261,8 +263,8 @@ def scan_new_setups():
             ma_fast = q["ma_fast"]
             vol_ratio = q["vol_ratio"]
 
-            bullish_setup = (pct >= 0.20) and (p >= ma_fast * 0.997) and (vol_ratio >= 0.50)
-            bearish_setup = (pct <= -0.20) and (p <= ma_fast * 1.003) and (vol_ratio >= 0.50)
+            bullish_setup = (pct >= 0.20) and (vol_ratio >= 0.25)
+            bearish_setup = (pct <= -0.20) and (vol_ratio >= 0.25)
 
             if bullish_setup:
                 signal_count += 1
@@ -295,7 +297,7 @@ def scan_new_setups():
                     f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
                     f"🎯 الهدف 2: ${t2} — المتوقع: {eta_t2}\n"
                     f"🛑 الوقف الفني: ${sl}\n"
-                    f"📊 التحليل: صعود {pct}% قرب/فوق MA5 وحجم {vol_ratio}x"
+                    f"📊 التحليل: صعود {pct}% | MA5: ${ma_fast} | حجم {vol_ratio}x"
                 )
                 send_tg(msg)
                 time.sleep(0.3)
@@ -331,7 +333,7 @@ def scan_new_setups():
                     f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
                     f"🎯 الهدف 2: ${t2} — المتوقع: {eta_t2}\n"
                     f"🛑 الوقف الفني: ${sl}\n"
-                    f"📊 التحليل: هبوط {pct}% قرب/تحت MA5 وحجم {vol_ratio}x"
+                    f"📊 التحليل: هبوط {pct}% | MA5: ${ma_fast} | حجم {vol_ratio}x"
                 )
                 send_tg(msg)
                 time.sleep(0.3)
@@ -341,8 +343,9 @@ def scan_new_setups():
     now_ts = time.time()
     if now_ts - last_heartbeat_ts >= 300:
         last_heartbeat_ts = now_ts
+        miss_txt = f" | ناقص: {','.join(missing)}" if missing else ""
         send_tg(
-            f"📡 نبضة فحص: قراءة {ok_count}/{len(WATCHLIST)} سهم | أعلى حركة: {top_move[0]} ({top_move[1]:+.2f}%) | صفقات اليوم: {signal_count}"
+            f"📡 نبضة فحص: قراءة {ok_count}/{len(WATCHLIST)} سهم{miss_txt} | أعلى حركة: {top_move[0]} ({top_move[1]:+.2f}%) | صفقات اليوم: {signal_count}"
         )
 
 
