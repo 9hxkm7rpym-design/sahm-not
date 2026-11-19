@@ -158,7 +158,7 @@ def can_signal_again(ticker, current_price):
     if prev is None or prev <= 0:
         return True
     move_pct = abs(current_price - prev) / prev * 100
-    return move_pct >= 0.25
+    return move_pct >= 0.30
 
 
 def reset_daily_counters(date_str):
@@ -263,17 +263,17 @@ def scan_new_setups():
             ma_fast = q["ma_fast"]
             vol_ratio = q["vol_ratio"]
 
-            bullish_setup = (pct >= 0.20) and (vol_ratio >= 0.25)
-            bearish_setup = (pct <= -0.20) and (vol_ratio >= 0.25)
+            bullish_setup = (pct >= 0.35) and (p >= ma_fast * 0.996) and (vol_ratio >= 0.25)
+            bearish_setup = (pct <= -0.35) and (p <= ma_fast * 1.004) and (vol_ratio >= 0.25)
 
             if bullish_setup:
                 signal_count += 1
                 trade_key = f"{ticker}_{signal_count}"
                 entry_low = round(min(p, ma_fast) * 0.999, 2)
                 entry_high = round(max(p, ma_fast) * 1.001, 2)
-                t1 = round(p * 1.007, 2)
-                t2 = round(p * 1.013, 2)
-                sl = round(min(q["swing_low"], p * 0.991), 2)
+                t1 = round(p * 1.008, 2)
+                t2 = round(p * 1.015, 2)
+                sl = round(min(q["swing_low"], p * 0.990), 2)
 
                 eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
                 eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
@@ -297,7 +297,7 @@ def scan_new_setups():
                     f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
                     f"🎯 الهدف 2: ${t2} — المتوقع: {eta_t2}\n"
                     f"🛑 الوقف الفني: ${sl}\n"
-                    f"📊 التحليل: صعود {pct}% | MA5: ${ma_fast} | حجم {vol_ratio}x"
+                    f"📊 التحليل: زخم صاعد +{pct}% | MA5: ${ma_fast} | حجم {vol_ratio}x"
                 )
                 send_tg(msg)
                 time.sleep(0.3)
@@ -307,9 +307,9 @@ def scan_new_setups():
                 trade_key = f"{ticker}_{signal_count}"
                 entry_low = round(min(p, ma_fast) * 0.999, 2)
                 entry_high = round(max(p, ma_fast) * 1.001, 2)
-                t1 = round(p * 0.993, 2)
-                t2 = round(p * 0.987, 2)
-                sl = round(max(q["swing_high"], p * 1.009), 2)
+                t1 = round(p * 0.992, 2)
+                t2 = round(p * 0.985, 2)
+                sl = round(max(q["swing_high"], p * 1.010), 2)
 
                 eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
                 eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
@@ -333,7 +333,7 @@ def scan_new_setups():
                     f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
                     f"🎯 الهدف 2: ${t2} — المتوقع: {eta_t2}\n"
                     f"🛑 الوقف الفني: ${sl}\n"
-                    f"📊 التحليل: هبوط {pct}% | MA5: ${ma_fast} | حجم {vol_ratio}x"
+                    f"📊 التحليل: زخم هابط {pct}% | MA5: ${ma_fast} | حجم {vol_ratio}x"
                 )
                 send_tg(msg)
                 time.sleep(0.3)
@@ -378,5 +378,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بنسخة الاستقرار ومنع التعليق.")
+    send_tg("⚡ تم تشغيل البوت بنسخة الصفقات القوية والاستقرار.")
     main_loop()
