@@ -11,7 +11,7 @@ CHAT_ID = "1068286006"
 WATCHLIST = [
     "NVDA", "TSLA", "MSFT", "AMZN", "AAPL", "META", "OXY", "NFLX", "AMD", "GOOGL",
     "BA", "BABA", "COIN", "DIS", "JPM", "MARA", "NIO", "ORCL", "PLTR", "QQQ",
-    "ROKU", "SPY", "SQ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
+    "ROKU", "SPY", "XYZ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
 active_trades = {}
@@ -20,6 +20,9 @@ signal_count = 0
 stats = {"wins": 0, "losses": 0}
 eod_reported_date = ""
 active_trading_date = ""
+
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -33,10 +36,15 @@ class HealthHandler(BaseHTTPRequestHandler):
         return
 
 
-def start_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
+def run_health_server():
+    while True:
+        try:
+            port = int(os.environ.get("PORT", 8080))
+            server = HTTPServer(("0.0.0.0", port), HealthHandler)
+            server.serve_forever()
+        except Exception as e:
+            print(f"Health server error: {e}")
+            time.sleep(3)
 
 
 def send_tg(text):
@@ -44,11 +52,10 @@ def send_tg(text):
     payload = {
         "chat_id": CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown",
         "disable_web_page_preview": True
     }
     try:
-        res = requests.post(url, json=payload, timeout=8)
+        res = SESSION.post(url, json=payload, timeout=6)
         if res.status_code != 200:
             print(f"TG Error {res.status_code}: {res.text}")
     except Exception as e:
@@ -68,30 +75,33 @@ def is_us_winter_open(now_ksa):
 
 def fetch_quote_and_analysis(ticker):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=5d"
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        r = requests.get(url, headers=headers, timeout=8)
+        r = SESSION.get(url, timeout=6)
         if r.status_code != 200:
             return None
         data = r.json()
-        result = data.get("chart", {}).get("result")
-        if not result:
+        chart = data.get("chart") or {}
+        results = chart.get("result") or []
+        if not results:
             return None
-        meta = result[0].get("meta", {})
-        quotes_list = result[0].get("indicators", {}).get("quote", [])
-        if not quotes_list:
-            return None
-        quote = quotes_list[0]
 
+        result0 = results[0] or {}
+        meta = result0.get("meta") or {}
+        indicators = result0.get("indicators") or {}
+        quotes = indicators.get("quote") or []
+        if not quotes:
+            return None
+
+        quote = quotes[0] or {}
         price = meta.get("regularMarketPrice")
         prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
         if not price or not prev_close:
             return None
 
-        closes = [c for c in quote.get("close", []) if c is not None]
-        lows = [l for l in quote.get("low", []) if l is not None]
-        highs = [h for h in quote.get("high", []) if h is not None]
-        volumes = [v for v in quote.get("volume", []) if v is not None]
+        closes = [c for c in (quote.get("close") or []) if c is not None]
+        lows = [l for l in (quote.get("low") or []) if l is not None]
+        highs = [h for h in (quote.get("high") or []) if h is not None]
+        volumes = [v for v in (quote.get("volume") or []) if v is not None]
 
         if len(closes) < 5:
             return None
@@ -99,9 +109,6 @@ def fetch_quote_and_analysis(ticker):
         pct = ((price - prev_close) / prev_close) * 100
         ma_fast = sum(closes[-5:]) / 5
         ma_slow = sum(closes[-15:]) / min(len(closes), 15)
-
-        # زخم آخر 3 شموع (15 دقيقة)
-        recent_3_pct = ((closes[-1] - closes[-3]) / closes[-3]) * 100 if len(closes) >= 3 and closes[-3] else 0.0
 
         avg_vol = (sum(volumes[:-1]) / max(1, len(volumes) - 1)) if len(volumes) > 1 else 0
         last_vol = volumes[-1] if volumes else 0
@@ -116,7 +123,6 @@ def fetch_quote_and_analysis(ticker):
         return {
             "price": round(float(price), 2),
             "pct": round(float(pct), 2),
-            "recent_3_pct": round(float(recent_3_pct), 2),
             "ma_fast": round(float(ma_fast), 2),
             "ma_slow": round(float(ma_slow), 2),
             "vol_ratio": vol_ratio,
@@ -151,7 +157,7 @@ def can_signal_again(ticker, current_price):
     if prev is None or prev <= 0:
         return True
     move_pct = abs(current_price - prev) / prev * 100
-    return move_pct >= 0.30
+    return move_pct >= 0.25
 
 
 def reset_daily_counters(date_str):
@@ -168,15 +174,15 @@ def send_end_of_day_report(date_str, now_ksa):
     win_rate = round((stats["wins"] / decided) * 100, 1) if decided > 0 else 0.0
 
     msg = (
-        f"📊 *تقرير نهاية اليوم ({date_str})*\n"
+        f"📊 تقرير نهاية اليوم ({date_str})\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"📌 صفقات اليوم: `{signal_count}`\n"
-        f"✅ أهداف محققة اليوم: `{stats['wins']}`\n"
-        f"❌ ضربت الوقف اليوم: `{stats['losses']}`\n"
-        f"⏳ لا تزال متابعة للهدف/الوقف: `{open_count}`\n"
-        f"🎯 نسبة النجاح المحسومة: `{win_rate}%`\n"
+        f"📌 صفقات اليوم: {signal_count}\n"
+        f"✅ أهداف محققة اليوم: {stats['wins']}\n"
+        f"❌ ضربت الوقف اليوم: {stats['losses']}\n"
+        f"⏳ لا تزال متابعة للهدف/الوقف: {open_count}\n"
+        f"🎯 نسبة النجاح المحسومة: {win_rate}%\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"⏰ الساعة: `{now_ksa.strftime('%H:%M')} KSA`"
+        f"⏰ الساعة: {now_ksa.strftime('%H:%M')} KSA"
     )
     send_tg(msg)
     eod_reported_date = date_str
@@ -184,44 +190,47 @@ def send_end_of_day_report(date_str, now_ksa):
 
 def monitor_active_trades():
     done = []
-    for trade_key, tr in active_trades.items():
-        ticker = tr["ticker"]
-        q = fetch_quote_and_analysis(ticker)
-        if not q:
-            continue
-        p = q["price"]
-        num = tr["num"]
+    for trade_key, tr in list(active_trades.items()):
+        try:
+            ticker = tr["ticker"]
+            q = fetch_quote_and_analysis(ticker)
+            if not q:
+                continue
+            p = q["price"]
+            num = tr["num"]
 
-        if tr["side"] == "CALL":
-            if not tr["t1_hit"] and p >= tr["t1"]:
-                tr["t1_hit"] = True
-                stats["wins"] += 1
-                send_tg(f"✅ رقم `{num}` — *{ticker}* حقق الهدف 1 (`${p}`)")
-            if p >= tr["t2"]:
-                if not tr["t1_hit"]:
+            if tr["side"] == "CALL":
+                if not tr["t1_hit"] and p >= tr["t1"]:
+                    tr["t1_hit"] = True
                     stats["wins"] += 1
-                stats["wins"] += 1
-                send_tg(f"✅ رقم `{num}` — *{ticker}* حقق الهدف 2 (`${p}`)")
-                done.append(trade_key)
-            elif p <= tr["sl"]:
-                stats["losses"] += 1
-                send_tg(f"❌ رقم `{num}` — *{ticker}* ضرب الوقف (`${p}`)")
-                done.append(trade_key)
-        else:
-            if not tr["t1_hit"] and p <= tr["t1"]:
-                tr["t1_hit"] = True
-                stats["wins"] += 1
-                send_tg(f"✅ رقم `{num}` — *{ticker}* حقق الهدف 1 (`${p}`)")
-            if p <= tr["t2"]:
-                if not tr["t1_hit"]:
+                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 1 (${p})")
+                if p >= tr["t2"]:
+                    if not tr["t1_hit"]:
+                        stats["wins"] += 1
                     stats["wins"] += 1
-                stats["wins"] += 1
-                send_tg(f"✅ رقم `{num}` — *{ticker}* حقق الهدف 2 (`${p}`)")
-                done.append(trade_key)
-            elif p >= tr["sl"]:
-                stats["losses"] += 1
-                send_tg(f"❌ رقم `{num}` — *{ticker}* ضرب الوقف (`${p}`)")
-                done.append(trade_key)
+                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 2 (${p})")
+                    done.append(trade_key)
+                elif p <= tr["sl"]:
+                    stats["losses"] += 1
+                    send_tg(f"❌ رقم {num} — {ticker} ضرب الوقف (${p})")
+                    done.append(trade_key)
+            else:
+                if not tr["t1_hit"] and p <= tr["t1"]:
+                    tr["t1_hit"] = True
+                    stats["wins"] += 1
+                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 1 (${p})")
+                if p <= tr["t2"]:
+                    if not tr["t1_hit"]:
+                        stats["wins"] += 1
+                    stats["wins"] += 1
+                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 2 (${p})")
+                    done.append(trade_key)
+                elif p >= tr["sl"]:
+                    stats["losses"] += 1
+                    send_tg(f"❌ رقم {num} — {ticker} ضرب الوقف (${p})")
+                    done.append(trade_key)
+        except Exception as e:
+            print(f"Monitor error {trade_key}: {e}")
 
     for k in done:
         active_trades.pop(k, None)
@@ -229,135 +238,132 @@ def monitor_active_trades():
 
 def scan_new_setups():
     global signal_count
+    ok_count = 0
 
     for ticker in WATCHLIST:
-        q = fetch_quote_and_analysis(ticker)
-        time.sleep(0.2)
-        if not q:
-            continue
+        try:
+            q = fetch_quote_and_analysis(ticker)
+            time.sleep(0.1)
+            if not q:
+                continue
+            ok_count += 1
 
-        p = q["price"]
-        if not can_signal_again(ticker, p):
-            continue
+            p = q["price"]
+            if not can_signal_again(ticker, p):
+                continue
 
-        pct = q["pct"]
-        r3 = q["recent_3_pct"]
-        ma_fast = q["ma_fast"]
-        ma_slow = q["ma_slow"]
-        vol_ratio = q["vol_ratio"]
+            pct = q["pct"]
+            ma_fast = q["ma_fast"]
+            vol_ratio = q["vol_ratio"]
 
-        bullish_setup = (
-            (pct >= 0.25)
-            and (r3 >= 0.05)
-            and (p >= ma_fast * 0.998)
-            and (ma_fast >= ma_slow * 0.997)
-            and (vol_ratio >= 0.75)
-        )
-        bearish_setup = (
-            (pct <= -0.25)
-            and (r3 <= -0.05)
-            and (p <= ma_fast * 1.002)
-            and (ma_fast <= ma_slow * 1.003)
-            and (vol_ratio >= 0.75)
-        )
+            bullish_setup = (pct >= 0.20) and (p >= ma_fast * 0.997) and (vol_ratio >= 0.50)
+            bearish_setup = (pct <= -0.20) and (p <= ma_fast * 1.003) and (vol_ratio >= 0.50)
 
-        if bullish_setup:
-            signal_count += 1
-            trade_key = f"{ticker}_{signal_count}"
-            entry_low = round(min(p, ma_fast) * 0.999, 2)
-            entry_high = round(max(p, ma_fast) * 1.001, 2)
-            t1 = round(p * 1.007, 2)
-            t2 = round(p * 1.013, 2)
-            sl = round(min(q["swing_low"], p * 0.991), 2)
+            if bullish_setup:
+                signal_count += 1
+                trade_key = f"{ticker}_{signal_count}"
+                entry_low = round(min(p, ma_fast) * 0.999, 2)
+                entry_high = round(max(p, ma_fast) * 1.001, 2)
+                t1 = round(p * 1.007, 2)
+                t2 = round(p * 1.013, 2)
+                sl = round(min(q["swing_low"], p * 0.991), 2)
 
-            eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
-            eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
+                eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
+                eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
 
-            active_trades[trade_key] = {
-                "num": signal_count,
-                "ticker": ticker,
-                "side": "CALL",
-                "t1": t1,
-                "t2": t2,
-                "sl": sl,
-                "t1_hit": False
-            }
-            last_signaled_price[ticker] = p
+                active_trades[trade_key] = {
+                    "num": signal_count,
+                    "ticker": ticker,
+                    "side": "CALL",
+                    "t1": t1,
+                    "t2": t2,
+                    "sl": sl,
+                    "t1_hit": False
+                }
+                last_signaled_price[ticker] = p
 
-            msg = (
-                f"🟢 *صفقة #{signal_count} — {ticker} (CALL)*\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"💵 السعر الحالي: `${p}` (`+{pct}%`)\n"
-                f"📍 منطقة الدخول: `${entry_low}` — `${entry_high}`\n"
-                f"🎯 الهدف 1: `${t1}` — المتوقع: `{eta_t1}`\n"
-                f"🎯 الهدف 2: `${t2}` — المتوقع: `{eta_t2}`\n"
-                f"🛑 الوقف الفني: `${sl}`\n"
-                f"📊 التحليل: زخم صاعد (`{r3:+.2f}%` آخر 15د) فوق `MA5/15` وحجم `{vol_ratio}x`"
-            )
-            send_tg(msg)
-            time.sleep(0.5)
+                msg = (
+                    f"🟢 صفقة #{signal_count} — {ticker} (CALL)\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"💵 السعر الحالي: ${p} (+{pct}%)\n"
+                    f"📍 منطقة الدخول: ${entry_low} — ${entry_high}\n"
+                    f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
+                    f"🎯 الهدف 2: ${t2} — المتوقع: {eta_t2}\n"
+                    f"🛑 الوقف الفني: ${sl}\n"
+                    f"📊 التحليل: صعود {pct}% قرب/فوق MA5 وحجم {vol_ratio}x"
+                )
+                send_tg(msg)
+                time.sleep(0.3)
 
-        elif bearish_setup:
-            signal_count += 1
-            trade_key = f"{ticker}_{signal_count}"
-            entry_low = round(min(p, ma_fast) * 0.999, 2)
-            entry_high = round(max(p, ma_fast) * 1.001, 2)
-            t1 = round(p * 0.993, 2)
-            t2 = round(p * 0.987, 2)
-            sl = round(max(q["swing_high"], p * 1.009), 2)
+            elif bearish_setup:
+                signal_count += 1
+                trade_key = f"{ticker}_{signal_count}"
+                entry_low = round(min(p, ma_fast) * 0.999, 2)
+                entry_high = round(max(p, ma_fast) * 1.001, 2)
+                t1 = round(p * 0.993, 2)
+                t2 = round(p * 0.987, 2)
+                sl = round(max(q["swing_high"], p * 1.009), 2)
 
-            eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
-            eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
+                eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
+                eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
 
-            active_trades[trade_key] = {
-                "num": signal_count,
-                "ticker": ticker,
-                "side": "PUT",
-                "t1": t1,
-                "t2": t2,
-                "sl": sl,
-                "t1_hit": False
-            }
-            last_signaled_price[ticker] = p
+                active_trades[trade_key] = {
+                    "num": signal_count,
+                    "ticker": ticker,
+                    "side": "PUT",
+                    "t1": t1,
+                    "t2": t2,
+                    "sl": sl,
+                    "t1_hit": False
+                }
+                last_signaled_price[ticker] = p
 
-            msg = (
-                f"🔴 *صفقة #{signal_count} — {ticker} (PUT)*\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"💵 السعر الحالي: `${p}` (`{pct}%`)\n"
-                f"📍 منطقة الدخول: `${entry_low}` — `${entry_high}`\n"
-                f"🎯 الهدف 1: `${t1}` — المتوقع: `{eta_t1}`\n"
-                f"🎯 الهدف 2: `${t2}` — المتوقع: `{eta_t2}`\n"
-                f"🛑 الوقف الفني: `${sl}`\n"
-                f"📊 التحليل: ضغط بيع (`{r3:+.2f}%` آخر 15د) تحت `MA5/15` وحجم `{vol_ratio}x`"
-            )
-            send_tg(msg)
-            time.sleep(0.5)
+                msg = (
+                    f"🔴 صفقة #{signal_count} — {ticker} (PUT)\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"💵 السعر الحالي: ${p} ({pct}%)\n"
+                    f"📍 منطقة الدخول: ${entry_low} — ${entry_high}\n"
+                    f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
+                    f"🎯 الهدف 2: ${t2} — المتوقع: {eta_t2}\n"
+                    f"🛑 الوقف الفني: ${sl}\n"
+                    f"📊 التحليل: هبوط {pct}% قرب/تحت MA5 وحجم {vol_ratio}x"
+                )
+                send_tg(msg)
+                time.sleep(0.3)
+        except Exception as e:
+            print(f"Scan error {ticker}: {e}")
+
+    print(f"Scan cycle done | valid quotes: {ok_count}/{len(WATCHLIST)} | total signals: {signal_count}")
 
 
 def main_loop():
     while True:
-        now_ksa = ksa_now()
-        today_str = now_ksa.strftime("%Y-%m-%d")
+        try:
+            now_ksa = ksa_now()
+            today_str = now_ksa.strftime("%Y-%m-%d")
 
-        if is_us_winter_open(now_ksa):
-            if active_trading_date != today_str:
-                reset_daily_counters(today_str)
-            monitor_active_trades()
-            scan_new_setups()
-            time.sleep(20)
-        else:
-            if (
-                now_ksa.weekday() < 5
-                and active_trading_date == today_str
-                and eod_reported_date != today_str
-                and now_ksa.time() >= dtime(0, 1)
-                and now_ksa.time() <= dtime(4, 0)
-            ):
-                send_end_of_day_report(today_str, now_ksa)
-            time.sleep(45)
+            if is_us_winter_open(now_ksa):
+                if active_trading_date != today_str:
+                    reset_daily_counters(today_str)
+                monitor_active_trades()
+                scan_new_setups()
+                time.sleep(20)
+            else:
+                if (
+                    now_ksa.weekday() < 5
+                    and active_trading_date == today_str
+                    and eod_reported_date != today_str
+                    and now_ksa.time() >= dtime(0, 1)
+                    and now_ksa.time() <= dtime(4, 0)
+                ):
+                    send_end_of_day_report(today_str, now_ksa)
+                time.sleep(45)
+        except Exception as e:
+            print(f"Main loop error: {e}")
+            time.sleep(5)
 
 
 if __name__ == "__main__":
-    threading.Thread(target=start_server, daemon=True).start()
-    send_tg("⚡ *تم تشغيل البوت بنسخة الزخم السريع والجودة المحسّنة.*")
+    threading.Thread(target=run_health_server, daemon=True).start()
+    send_tg("⚡ تم تشغيل البوت بنسخة الاستقرار ومنع التعليق.")
     main_loop()
