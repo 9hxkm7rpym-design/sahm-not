@@ -71,10 +71,17 @@ def fetch_quote_and_analysis(ticker):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code != 200:
+            return None
         data = r.json()
-        result = data["chart"]["result"][0]
-        meta = result["meta"]
-        quote = result["indicators"]["quote"][0]
+        result = data.get("chart", {}).get("result")
+        if not result:
+            return None
+        meta = result[0].get("meta", {})
+        quotes_list = result[0].get("indicators", {}).get("quote", [])
+        if not quotes_list:
+            return None
+        quote = quotes_list[0]
 
         price = meta.get("regularMarketPrice")
         prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
@@ -93,6 +100,9 @@ def fetch_quote_and_analysis(ticker):
         ma_fast = sum(closes[-5:]) / 5
         ma_slow = sum(closes[-15:]) / min(len(closes), 15)
 
+        # زخم آخر 3 شموع (15 دقيقة)
+        recent_3_pct = ((closes[-1] - closes[-3]) / closes[-3]) * 100 if len(closes) >= 3 and closes[-3] else 0.0
+
         avg_vol = (sum(volumes[:-1]) / max(1, len(volumes) - 1)) if len(volumes) > 1 else 0
         last_vol = volumes[-1] if volumes else 0
         vol_ratio = round((last_vol / avg_vol), 2) if avg_vol > 0 else 1.0
@@ -106,6 +116,7 @@ def fetch_quote_and_analysis(ticker):
         return {
             "price": round(float(price), 2),
             "pct": round(float(pct), 2),
+            "recent_3_pct": round(float(recent_3_pct), 2),
             "ma_fast": round(float(ma_fast), 2),
             "ma_slow": round(float(ma_slow), 2),
             "vol_ratio": vol_ratio,
@@ -140,7 +151,7 @@ def can_signal_again(ticker, current_price):
     if prev is None or prev <= 0:
         return True
     move_pct = abs(current_price - prev) / prev * 100
-    return move_pct >= 0.50
+    return move_pct >= 0.30
 
 
 def reset_daily_counters(date_str):
@@ -221,6 +232,7 @@ def scan_new_setups():
 
     for ticker in WATCHLIST:
         q = fetch_quote_and_analysis(ticker)
+        time.sleep(0.2)
         if not q:
             continue
 
@@ -229,21 +241,34 @@ def scan_new_setups():
             continue
 
         pct = q["pct"]
+        r3 = q["recent_3_pct"]
         ma_fast = q["ma_fast"]
         ma_slow = q["ma_slow"]
         vol_ratio = q["vol_ratio"]
 
-        bullish_setup = (pct >= 0.50) and (p >= ma_fast) and (ma_fast >= ma_slow * 0.999) and (vol_ratio >= 0.85)
-        bearish_setup = (pct <= -0.50) and (p <= ma_fast) and (ma_fast <= ma_slow * 1.001) and (vol_ratio >= 0.85)
+        bullish_setup = (
+            (pct >= 0.25)
+            and (r3 >= 0.05)
+            and (p >= ma_fast * 0.998)
+            and (ma_fast >= ma_slow * 0.997)
+            and (vol_ratio >= 0.75)
+        )
+        bearish_setup = (
+            (pct <= -0.25)
+            and (r3 <= -0.05)
+            and (p <= ma_fast * 1.002)
+            and (ma_fast <= ma_slow * 1.003)
+            and (vol_ratio >= 0.75)
+        )
 
         if bullish_setup:
             signal_count += 1
             trade_key = f"{ticker}_{signal_count}"
             entry_low = round(min(p, ma_fast) * 0.999, 2)
             entry_high = round(max(p, ma_fast) * 1.001, 2)
-            t1 = round(p * 1.008, 2)
-            t2 = round(p * 1.015, 2)
-            sl = round(min(q["swing_low"], p * 0.990), 2)
+            t1 = round(p * 1.007, 2)
+            t2 = round(p * 1.013, 2)
+            sl = round(min(q["swing_low"], p * 0.991), 2)
 
             eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
             eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
@@ -267,19 +292,19 @@ def scan_new_setups():
                 f"🎯 الهدف 1: `${t1}` — المتوقع: `{eta_t1}`\n"
                 f"🎯 الهدف 2: `${t2}` — المتوقع: `{eta_t2}`\n"
                 f"🛑 الوقف الفني: `${sl}`\n"
-                f"📊 التحليل: صعود `{pct}%` فوق `MA5/15` وحجم `{vol_ratio}x`"
+                f"📊 التحليل: زخم صاعد (`{r3:+.2f}%` آخر 15د) فوق `MA5/15` وحجم `{vol_ratio}x`"
             )
             send_tg(msg)
-            time.sleep(0.6)
+            time.sleep(0.5)
 
         elif bearish_setup:
             signal_count += 1
             trade_key = f"{ticker}_{signal_count}"
             entry_low = round(min(p, ma_fast) * 0.999, 2)
             entry_high = round(max(p, ma_fast) * 1.001, 2)
-            t1 = round(p * 0.992, 2)
-            t2 = round(p * 0.985, 2)
-            sl = round(max(q["swing_high"], p * 1.010), 2)
+            t1 = round(p * 0.993, 2)
+            t2 = round(p * 0.987, 2)
+            sl = round(max(q["swing_high"], p * 1.009), 2)
 
             eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
             eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
@@ -303,10 +328,10 @@ def scan_new_setups():
                 f"🎯 الهدف 1: `${t1}` — المتوقع: `{eta_t1}`\n"
                 f"🎯 الهدف 2: `${t2}` — المتوقع: `{eta_t2}`\n"
                 f"🛑 الوقف الفني: `${sl}`\n"
-                f"📊 التحليل: هبوط `{pct}%` تحت `MA5/15` وحجم `{vol_ratio}x`"
+                f"📊 التحليل: ضغط بيع (`{r3:+.2f}%` آخر 15د) تحت `MA5/15` وحجم `{vol_ratio}x`"
             )
             send_tg(msg)
-            time.sleep(0.6)
+            time.sleep(0.5)
 
 
 def main_loop():
@@ -334,5 +359,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=start_server, daemon=True).start()
-    send_tg("⚡ *تم تشغيل النسخة المتوازنة (صفقات متدفقة + جودة أعلى + توضيح مدة كل هدف).*")
+    send_tg("⚡ *تم تشغيل البوت بنسخة الزخم السريع والجودة المحسّنة.*")
     main_loop()
