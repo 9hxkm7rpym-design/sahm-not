@@ -20,6 +20,7 @@ signal_count = 0
 stats = {"wins": 0, "losses": 0}
 eod_reported_date = ""
 active_trading_date = ""
+last_heartbeat_ts = 0.0
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -237,8 +238,9 @@ def monitor_active_trades():
 
 
 def scan_new_setups():
-    global signal_count
+    global signal_count, last_heartbeat_ts
     ok_count = 0
+    top_move = ("-", 0.0)
 
     for ticker in WATCHLIST:
         try:
@@ -249,10 +251,13 @@ def scan_new_setups():
             ok_count += 1
 
             p = q["price"]
+            pct = q["pct"]
+            if abs(pct) > abs(top_move[1]):
+                top_move = (ticker, pct)
+
             if not can_signal_again(ticker, p):
                 continue
 
-            pct = q["pct"]
             ma_fast = q["ma_fast"]
             vol_ratio = q["vol_ratio"]
 
@@ -333,7 +338,12 @@ def scan_new_setups():
         except Exception as e:
             print(f"Scan error {ticker}: {e}")
 
-    print(f"Scan cycle done | valid quotes: {ok_count}/{len(WATCHLIST)} | total signals: {signal_count}")
+    now_ts = time.time()
+    if now_ts - last_heartbeat_ts >= 300:
+        last_heartbeat_ts = now_ts
+        send_tg(
+            f"📡 نبضة فحص: قراءة {ok_count}/{len(WATCHLIST)} سهم | أعلى حركة: {top_move[0]} ({top_move[1]:+.2f}%) | صفقات اليوم: {signal_count}"
+        )
 
 
 def main_loop():
