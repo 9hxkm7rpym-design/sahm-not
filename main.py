@@ -1,15 +1,13 @@
 import os
 import time
-import requests
-from datetime import datetime, time as dtime, timedelta, timezone
 import threading
+from datetime import datetime, time as dtime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import requests
 
-# --- بيانات الربط المباشر المعتمدة لبوتك ---
 TELEGRAM_TOKEN = "8472180858:AAG2eMBTuzRMz-tLkT2MV9ow_YjeUbXAbyY"
 CHAT_ID = "1068286006"
 
-# --- قائمة الأسهم النشطة للأوبشن ---
 WATCHLIST = [
     "NVDA", "TSLA", "MSFT", "AMZN", "AAPL", "META", "OXY", "NFLX", "AMD", "GOOGL",
     "BA", "BABA", "COIN", "DIS", "JPM", "MARA", "NIO", "ORCL", "PLTR", "QQQ",
@@ -17,231 +15,277 @@ WATCHLIST = [
 ]
 
 active_trades = {}
-sent_signals = set()
-signal_counter = 0      
-daily_stats = {"wins": 0, "losses": 0}
-report_sent_today = False
+sent_today = set()
+signal_count = 0
+stats = {"wins": 0, "losses": 0, "closed_eod": 0}
+eod_reported_date = ""
+active_trading_date = ""
 
-class SimpleServer(BaseHTTPRequestHandler):
+
+class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-type", "text/html")
+        self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"OK - Ultimate Active & Win-Rate Bot Connected!")
-        
+        self.wfile.write("Bot Running".encode("utf-8"))
+
     def log_message(self, format, *args):
         return
 
-def run_web_server():
+
+def start_server():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), SimpleServer)
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
     server.serve_forever()
 
-def send_telegram_message(text):
+
+def send_tg(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
+    }
     try:
-        requests.post(url, json=payload, timeout=5)
+        res = requests.post(url, json=payload, timeout=8)
+        if res.status_code != 200:
+            print(f"TG Error {res.status_code}: {res.text}")
     except Exception as e:
-        print(f"Error sending message: {e}")
+        print(f"TG Exception: {e}")
 
-def get_real_market_data(ticker):
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=5)
-        data = response.json()
-        
-        meta = data['chart']['result'][0]['meta']
-        indicators = data['chart']['result'][0]['indicators']['quote'][0]
-        
-        current_price = meta['regularMarketPrice']
-        previous_close = meta['previousClose']
-        change_percent = ((current_price - previous_close) / previous_close) * 100
-        
-        lows = [l for l in indicators.get('low', []) if l is not None]
-        highs = [h for h in indicators.get('high', []) if h is not None]
-        
-        recent_low = min(lows[-15:]) if lows else current_price * 0.98
-        recent_high = max(highs[-15:]) if highs else current_price * 1.02
 
-        price_ranges = [h - l for h, l in zip(highs[-20:], lows[-20:]) if h and l]
-        avg_candle_movement = sum(price_ranges) / len(price_ranges) if price_ranges else current_price * 0.005
-
-        return {
-            "success": True,
-            "price": round(current_price, 2),
-            "change": round(change_percent, 2),
-            "recent_low": round(recent_low, 2),
-            "recent_high": round(recent_high, 2),
-            "avg_candle": max(avg_candle_movement, 0.05)
-        }
-    except Exception as e:
-        return {"success": False}
-
-def calculate_real_chart_duration(current_price, target_price, avg_candle):
-    distance = abs(target_price - current_price)
-    estimated_candles = distance / avg_candle
-    
-    if estimated_candles <= 15:
-        return f"خلال سياق لحظي سريع (متوقع خلال {round(estimated_candles)} دقيقة)"
-    elif estimated_candles <= 60:
-        hours = round(estimated_candles / 60, 1)
-        return f"خلال الجلسة الحالية (متوقع خلال {hours} ساعة)"
-    else:
-        return "خلال تداولات الجلسة"
-
-def get_ksa_time():
+def ksa_now():
     return datetime.now(timezone(timedelta(hours=3)))
 
-def is_market_open():
-    ksa_time = get_ksa_time()
-    weekday = ksa_time.weekday()
-    if weekday >= 5: 
+
+def is_us_winter_open(now_ksa):
+    if now_ksa.weekday() >= 5:
         return False
-        
-    current_time = ksa_time.time()
-    market_start = dtime(17, 30) 
-    market_end = dtime(0, 0)     
-    
-    if current_time >= market_start or current_time <= market_end:
-        return True
-    return False
+    t = now_ksa.time()
+    return dtime(17, 30) <= t <= dtime(23, 59)
 
-def analyze_market_and_send():
-    global signal_counter, daily_stats, report_sent_today, sent_signals
-    
-    while True:
-        ksa_time = get_ksa_time()
-        
-        if ksa_time.hour == 9 and ksa_time.minute == 0:
-            if report_sent_today:
-                daily_stats = {"wins": 0, "losses": 0}
-                sent_signals.clear()
-                report_sent_today = False
 
-        if not is_market_open():
-            time.sleep(60)
+def fetch_quote_and_analysis(ticker):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=1d"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = requests.get(url, headers=headers, timeout=8)
+        data = r.json()
+        result = data["chart"]["result"][0]
+        meta = result["meta"]
+        quote = result["indicators"]["quote"][0]
+
+        price = meta.get("regularMarketPrice")
+        prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
+        if not price or not prev_close:
+            return None
+
+        closes = [c for c in quote.get("close", []) if c is not None]
+        lows = [l for l in quote.get("low", []) if l is not None]
+        highs = [h for h in quote.get("high", []) if h is not None]
+        volumes = [v for v in quote.get("volume", []) if v is not None]
+
+        if len(closes) < 5:
+            return None
+
+        pct = ((price - prev_close) / prev_close) * 100
+        ma_fast = sum(closes[-5:]) / 5
+        ma_slow = sum(closes[-15:]) / min(len(closes), 15)
+
+        avg_vol = (sum(volumes[:-1]) / max(1, len(volumes) - 1)) if len(volumes) > 1 else 0
+        last_vol = volumes[-1] if volumes else 0
+        vol_ratio = round((last_vol / avg_vol), 2) if avg_vol > 0 else 1.0
+
+        swing_low = min(lows[-8:]) if lows else price * 0.99
+        swing_high = max(highs[-8:]) if highs else price * 1.01
+
+        ranges = [h - l for h, l in zip(highs[-10:], lows[-10:]) if h is not None and l is not None]
+        avg_5m_move = max(sum(ranges) / len(ranges), price * 0.0015) if ranges else price * 0.002
+
+        return {
+            "price": round(float(price), 2),
+            "pct": round(float(pct), 2),
+            "ma_fast": round(float(ma_fast), 2),
+            "ma_slow": round(float(ma_slow), 2),
+            "vol_ratio": vol_ratio,
+            "swing_low": round(float(swing_low), 2),
+            "swing_high": round(float(swing_high), 2),
+            "avg_5m_move": float(avg_5m_move)
+        }
+    except Exception as e:
+        print(f"Analysis error {ticker}: {e}")
+        return None
+
+
+def estimate_minutes_to_target(current_price, target_price, avg_5m_move, now_ksa):
+    mins_until_close = max(10, int((now_ksa.replace(hour=23, minute=59, second=0) - now_ksa).total_seconds() // 60))
+    dist = abs(target_price - current_price)
+    bars_needed = max(1.0, dist / max(avg_5m_move, 0.01))
+    est_mins = int(round(bars_needed * 5 * 1.2))
+    return min(max(est_mins, 5), mins_until_close)
+
+
+def reset_daily_state(date_str):
+    global active_trades, sent_today, signal_count, stats, active_trading_date
+    active_trades = {}
+    sent_today = set()
+    signal_count = 0
+    stats = {"wins": 0, "losses": 0, "closed_eod": 0}
+    active_trading_date = date_str
+
+
+def send_end_of_day_report(date_str, now_ksa):
+    global eod_reported_date, active_trades, stats
+    closed_count = len(active_trades)
+    stats["closed_eod"] = closed_count
+    active_trades = {}
+
+    decided = stats["wins"] + stats["losses"]
+    win_rate = round((stats["wins"] / decided) * 100, 1) if decided > 0 else 0.0
+
+    msg = (
+        f"📊 *تقرير نهاية اليوم ({date_str})*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📌 إجمالي الصفقات: `{signal_count}`\n"
+        f"✅ حققت الهدف: `{stats['wins']}`\n"
+        f"❌ ضربت الوقف: `{stats['losses']}`\n"
+        f"🔒 أُغلقت بنهاية الجلسة: `{closed_count}`\n"
+        f"🎯 نسبة النجاح المحسومة: `{win_rate}%`\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"⏰ الساعة: `{now_ksa.strftime('%H:%M')} KSA`"
+    )
+    send_tg(msg)
+    eod_reported_date = date_str
+
+
+def monitor_active_trades():
+    done = []
+    for ticker, tr in active_trades.items():
+        q = fetch_quote_and_analysis(ticker)
+        if not q:
+            continue
+        p = q["price"]
+        num = tr["num"]
+
+        if tr["side"] == "CALL":
+            if p >= tr["t1"]:
+                stats["wins"] += 1
+                send_tg(f"✅ رقم `{num}` — *{ticker}* حقق الهدف (`${p}`)")
+                done.append(ticker)
+            elif p <= tr["sl"]:
+                stats["losses"] += 1
+                send_tg(f"❌ رقم `{num}` — *{ticker}* ضرب الوقف (`${p}`)")
+                done.append(ticker)
+        else:
+            if p <= tr["t1"]:
+                stats["wins"] += 1
+                send_tg(f"✅ رقم `{num}` — *{ticker}* حقق الهدف (`${p}`)")
+                done.append(ticker)
+            elif p >= tr["sl"]:
+                stats["losses"] += 1
+                send_tg(f"❌ رقم `{num}` — *{ticker}* ضرب الوقف (`${p}`)")
+                done.append(ticker)
+
+    for t in done:
+        active_trades.pop(t, None)
+
+
+def scan_new_setups(now_ksa):
+    global signal_count
+
+    for ticker in WATCHLIST:
+        if ticker in active_trades or ticker in sent_today:
             continue
 
-        # 1. تتبع دقيق للأهداف ووقف الخسارة الفني لايف
-        tickers_to_remove = []
-        for ticker, trade in active_trades.items():
-            market = get_real_market_data(ticker)
-            if market.get("success"):
-                current_price = market["price"]
-                trade_type = trade["type"]
-                target1 = trade["target1"]
-                stop_loss = trade["stop_loss"]
-                
-                if trade_type == "CALL":
-                    if current_price >= target1:
-                        daily_stats["wins"] += 1
-                        send_telegram_message(f"🎯 *هدف محقق باحترافية! (+)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}` ✅")
-                        tickers_to_remove.append(ticker)
-                    elif current_price <= stop_loss:
-                        daily_stats["losses"] += 1
-                        send_telegram_message(f"🛑 *وقف خسارة فني (-)*\n• السهم: `{ticker}` | CALL\n• السعر الحالي: `${current_price}` ❌")
-                        tickers_to_remove.append(ticker)
-                elif trade_type == "PUT":
-                    if current_price <= target1:
-                        daily_stats["wins"] += 1
-                        send_telegram_message(f"🎯 *هدف محقق باحترافية! (+)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}` ✅")
-                        tickers_to_remove.append(ticker)
-                    elif current_price >= stop_loss:
-                        daily_stats["losses"] += 1
-                        send_telegram_message(f"🛑 *وقف خسارة فني (-)*\n• السهم: `{ticker}` | PUT\n• السعر الحالي: `${current_price}` ❌")
-                        tickers_to_remove.append(ticker)
-                        
-        for t in tickers_to_remove:
-            del active_trades[t]
+        q = fetch_quote_and_analysis(ticker)
+        if not q:
+            continue
 
-        # 2. فحص نشط جداً (0.8%) لتدفق الصفقات مع أمان الوقف الفني
-        for ticker in WATCHLIST:
-            if ticker in active_trades or ticker in sent_signals:
-                continue
-                
-            market = get_real_market_data(ticker)
-            if market.get("success"):
-                change_val = market["change"]
-                current_price = market["price"]
-                recent_low = market["recent_low"]
-                recent_high = market["recent_high"]
-                avg_candle = market["avg_candle"]
-                
-                if change_val >= 0.8:
-                    signal_counter += 1
-                    grade = "🔥 صفقة نخبة (درجة A+)" if change_val >= 2.0 else "⭐ صفقة نشطة (درجة A)"
-                    
-                    entry_min = round(current_price * 0.998, 2)
-                    entry_max = round(current_price * 1.002, 2)
-                    target1 = round(current_price * 1.012, 2)
-                    target2 = round(current_price * 1.020, 2)
-                    stop_loss = round(min(recent_low, current_price * 0.985), 2)
-                    
-                    dynamic_duration = calculate_real_chart_duration(current_price, target1, avg_candle)
-                    
-                    active_trades[ticker] = {
-                        "id": signal_counter, "type": "CALL", "entry": current_price,
-                        "target1": target1, "stop_loss": stop_loss
-                    }
-                    sent_signals.add(ticker)
-                    
-                    msg = (
-                        f"🚀 *فرصة أوبشن نشطة #{signal_counter}*\n"
-                        f"━━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 *السهم:* `{ticker}` | `CALL (صعود) 🟢`\n"
-                        f"💵 *السعر الحالي:* `${current_price}` (+{change_val}%)\n"
-                        f"🏆 *التقييم:* `{grade}`\n"
-                        f"🎯 *الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
-                        f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
-                        f"🛑 *الوقف الذكي الفني:* `${stop_loss}`\n"
-                        f"⏳ *المدى الزمني:* `{dynamic_duration}`"
-                    )
-                    send_telegram_message(msg)
-                    time.sleep(1)
-                    
-                elif change_val <= -0.8:
-                    signal_counter += 1
-                    grade = "🔥 صفقة نخبة (درجة A+)" if change_val <= -2.0 else "⭐ صفقة نشطة (درجة A)"
-                    
-                    entry_min = round(current_price * 0.998, 2)
-                    entry_max = round(current_price * 1.002, 2)
-                    target1 = round(current_price * 0.988, 2)
-                    target2 = round(current_price * 0.980, 2)
-                    stop_loss = round(max(recent_high, current_price * 1.015), 2)
-                    
-                    dynamic_duration = calculate_real_chart_duration(current_price, target1, avg_candle)
-                    
-                    active_trades[ticker] = {
-                        "id": signal_counter, "type": "PUT", "entry": current_price,
-                        "target1": target1, "stop_loss": stop_loss
-                    }
-                    sent_signals.add(ticker)
-                    
-                    msg = (
-                        f"🚀 *فرصة أوبشن نشطة #{signal_counter}*\n"
-                        f"━━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 *السهم:* `{ticker}` | `PUT (هبوط) 🔴`\n"
-                        f"💵 *السعر الحالي:* `${current_price}` ({change_val}%)\n"
-                        f"🏆 *التقييم:* `{grade}`\n"
-                        f"🎯 *الدخول:* `${entry_min}` ⟵ `${entry_max}`\n"
-                        f"🎯 *الأهداف:* `${target1}` | `${target2}`\n"
-                        f"🛑 *الوقف الذكي الفني:* `${stop_loss}`\n"
-                        f"⏳ *المدى الزمني:* `{dynamic_duration}`"
-                    )
-                    send_telegram_message(msg)
-                    time.sleep(1)
+        p = q["price"]
+        pct = q["pct"]
+        ma_fast = q["ma_fast"]
+        ma_slow = q["ma_slow"]
+        vol_ratio = q["vol_ratio"]
 
-        time.sleep(30)
+        bullish_setup = (pct >= 0.65) and (p >= ma_fast) and (ma_fast >= ma_slow) and (vol_ratio >= 0.85)
+        bearish_setup = (pct <= -0.65) and (p <= ma_fast) and (ma_fast <= ma_slow) and (vol_ratio >= 0.85)
+
+        if bullish_setup:
+            signal_count += 1
+            entry_low = round(min(p, ma_fast) * 0.999, 2)
+            entry_high = round(max(p, ma_fast) * 1.001, 2)
+            t1 = round(p * 1.007, 2)
+            t2 = round(p * 1.013, 2)
+            sl = round(min(q["swing_low"], p * 0.992), 2)
+            est_mins = estimate_minutes_to_target(p, t1, q["avg_5m_move"], now_ksa)
+
+            active_trades[ticker] = {"num": signal_count, "side": "CALL", "t1": t1, "sl": sl}
+            sent_today.add(ticker)
+
+            msg = (
+                f"🟢 *صفقة #{signal_count} — {ticker} (CALL)*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"💵 السعر الحالي: `${p}` (`+{pct}%`)\n"
+                f"📍 منطقة الدخول: `${entry_low}` — `${entry_high}`\n"
+                f"🎯 الأهداف: `${t1}` | `${t2}`\n"
+                f"🛑 الوقف الفني: `${sl}`\n"
+                f"📊 التحليل: السعر فوق المتوسطات (`MA5/15`) وحجم التداول `{vol_ratio}x`\n"
+                f"⏳ المدة المتوقعة للهدف: `~{est_mins} دقيقة` (نفس الجلسة)"
+            )
+            send_tg(msg)
+            time.sleep(0.8)
+
+        elif bearish_setup:
+            signal_count += 1
+            entry_low = round(min(p, ma_fast) * 0.999, 2)
+            entry_high = round(max(p, ma_fast) * 1.001, 2)
+            t1 = round(p * 0.993, 2)
+            t2 = round(p * 0.987, 2)
+            sl = round(max(q["swing_high"], p * 1.008), 2)
+            est_mins = estimate_minutes_to_target(p, t1, q["avg_5m_move"], now_ksa)
+
+            active_trades[ticker] = {"num": signal_count, "side": "PUT", "t1": t1, "sl": sl}
+            sent_today.add(ticker)
+
+            msg = (
+                f"🔴 *صفقة #{signal_count} — {ticker} (PUT)*\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"💵 السعر الحالي: `${p}` (`{pct}%`)\n"
+                f"📍 منطقة الدخول: `${entry_low}` — `${entry_high}`\n"
+                f"🎯 الأهداف: `${t1}` | `${t2}`\n"
+                f"🛑 الوقف الفني: `${sl}`\n"
+                f"📊 التحليل: السعر تحت المتوسطات (`MA5/15`) وضغط بيع بحجم `{vol_ratio}x`\n"
+                f"⏳ المدة المتوقعة للهدف: `~{est_mins} دقيقة` (نفس الجلسة)"
+            )
+            send_tg(msg)
+            time.sleep(0.8)
+
+
+def main_loop():
+    while True:
+        now_ksa = ksa_now()
+        today_str = now_ksa.strftime("%Y-%m-%d")
+
+        if is_us_winter_open(now_ksa):
+            if active_trading_date != today_str:
+                reset_daily_state(today_str)
+            monitor_active_trades()
+            scan_new_setups(now_ksa)
+            time.sleep(25)
+        else:
+            if (
+                now_ksa.weekday() < 5
+                and active_trading_date == today_str
+                and eod_reported_date != today_str
+                and now_ksa.time() >= dtime(0, 1)
+                and now_ksa.time() <= dtime(4, 0)
+            ):
+                send_end_of_day_report(today_str, now_ksa)
+            time.sleep(45)
+
 
 if __name__ == "__main__":
-    server_thread = threading.Thread(target=run_web_server, daemon=True)
-    server_thread.start()
-    
-    try:
-        send_telegram_message("⚡ *تم تشغيل النسخة النشطة المتوازنة: صفقات سريعة متدفقة + وقف فني ذكي يحمي رأس المال!*")
-    except:
-        pass
-        
-    analyze_market_and_send()
+    threading.Thread(target=start_server, daemon=True).start()
+    send_tg("⚡ *تم تشغيل البوت المرتب (تحليل متوسطات + حجم + أهداف نفس الجلسة).*")
+    main_loop()
