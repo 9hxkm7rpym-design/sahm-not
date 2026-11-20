@@ -25,12 +25,11 @@ stats = {"wins": 0, "losses": 0}
 grade_counts = {"elite": 0, "strong": 0, "good": 0}
 eod_reported_date = ""
 active_trading_date = ""
-last_heartbeat_ts = 0.0
 tg_blocked_until = 0.0
 
 MAX_HOLD_MINUTES = 90
-MIN_VOL_RATIO = 0.85
-ELITE_MIN_VOL_RATIO = 1.1
+MIN_VOL_RATIO = 0.45
+ELITE_MIN_VOL_RATIO = 0.9
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -140,7 +139,7 @@ def send_tg(text):
         "disable_web_page_preview": True
     }
     try:
-        res = SESSION.post(url, json=payload, timeout=6)
+        res = SESSION.post(url, json=payload, timeout=5)
         if res.status_code == 429:
             retry_after = 15
             try:
@@ -167,7 +166,7 @@ def is_us_winter_open(now_ksa):
 def fetch_quote_and_analysis(ticker):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=5d"
     try:
-        r = SESSION.get(url, timeout=6)
+        r = SESSION.get(url, timeout=5)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -328,14 +327,14 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
         else:
             score += 10
 
-    if vol_ratio >= 1.3:
+    if vol_ratio >= 1.2:
         score += 20
-    elif vol_ratio >= 1.0:
-        score += 17
-    elif vol_ratio >= 0.85:
-        score += 14
+    elif vol_ratio >= 0.9:
+        score += 16
+    elif vol_ratio >= 0.45:
+        score += 12
     else:
-        score += 8
+        score += 6
 
     if side == "CALL":
         if recent_3_pct >= 0.15:
@@ -354,12 +353,12 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
 
     score = min(100, score)
 
-    if score >= 78 and vol_ratio >= ELITE_MIN_VOL_RATIO:
-        return "elite", "⭐ نخبة", score, "مسك موجة كاملة (سيولة عالية)"
-    elif score >= 50:
-        return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة (سيولة جيدة)"
+    if score >= 75 and vol_ratio >= ELITE_MIN_VOL_RATIO:
+        return "elite", "⭐ نخبة", score, "مسك موجة كاملة"
+    elif score >= 48:
+        return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة"
     else:
-        return "good", "⚡ جيدة", score, "دخول خفيف (سيولة جيدة)"
+        return "good", "⚡ جيدة", score, "دخول خفيف"
 
 
 def build_trade_reason(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, short_high, short_low):
@@ -452,7 +451,7 @@ def monitor_active_trades(now_ksa):
                         f"🎯 {ticker} | صفقة #{num} ({side}) {dot}\n"
                         f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {exit_time_str}"
                     )
-                    time.sleep(1.1)
+                    time.sleep(0.8)
                 if p >= tr["t2"]:
                     if not tr["t1_hit"]:
                         stats["wins"] += 1
@@ -464,7 +463,7 @@ def monitor_active_trades(now_ksa):
                         f"حقق الهدف 2 وأغلقت الصفقة بالكامل عند {p}"
                     )
                     closed_tickers.append(ticker)
-                    time.sleep(1.1)
+                    time.sleep(0.8)
                 elif p <= tr["sl"]:
                     stats["losses"] += 1
                     changed = True
@@ -474,7 +473,7 @@ def monitor_active_trades(now_ksa):
                         f"ضرب الوقف عند {p}"
                     )
                     closed_tickers.append(ticker)
-                    time.sleep(1.1)
+                    time.sleep(0.8)
                 elif expired_hold:
                     changed = True
                     status_txt = f"انتهت مدة الجلوس بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهت مدة الجلوس ({p})"
@@ -484,7 +483,7 @@ def monitor_active_trades(now_ksa):
                         f"انتهت مدة الجلوس ({exit_time_str}) والسعر الآن {p}"
                     )
                     closed_tickers.append(ticker)
-                    time.sleep(1.1)
+                    time.sleep(0.8)
             else:
                 if not tr["t1_hit"] and p <= tr["t1"]:
                     tr["t1_hit"] = True
@@ -495,7 +494,7 @@ def monitor_active_trades(now_ksa):
                         f"🎯 {ticker} | صفقة #{num} ({side}) {dot}\n"
                         f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {exit_time_str}"
                     )
-                    time.sleep(1.1)
+                    time.sleep(0.8)
                 if p <= tr["t2"]:
                     if not tr["t1_hit"]:
                         stats["wins"] += 1
@@ -507,7 +506,7 @@ def monitor_active_trades(now_ksa):
                         f"حقق الهدف 2 وأغلقت الصفقة بالكامل عند {p}"
                     )
                     closed_tickers.append(ticker)
-                    time.sleep(1.1)
+                    time.sleep(0.8)
                 elif p >= tr["sl"]:
                     stats["losses"] += 1
                     changed = True
@@ -517,7 +516,7 @@ def monitor_active_trades(now_ksa):
                         f"ضرب الوقف عند {p}"
                     )
                     closed_tickers.append(ticker)
-                    time.sleep(1.1)
+                    time.sleep(0.8)
                 elif expired_hold:
                     changed = True
                     status_txt = f"انتهت مدة الجلوس بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهت مدة الجلوس ({p})"
@@ -527,7 +526,7 @@ def monitor_active_trades(now_ksa):
                         f"انتهت مدة الجلوس ({exit_time_str}) والسعر الآن {p}"
                     )
                     closed_tickers.append(ticker)
-                    time.sleep(1.1)
+                    time.sleep(0.8)
         except Exception as e:
             print(f"Monitor error {ticker}: {e}")
 
@@ -560,28 +559,21 @@ def format_trade_message(prefix, num, ticker, side, grade_label, score, sizing_h
 
 
 def scan_new_setups(now_ksa):
-    global signal_count, last_heartbeat_ts
-    ok_count = 0
-    missing = []
-    top_move = ("-", 0.0)
+    global signal_count
     sent_this_scan = 0
     opened_any = False
 
     for ticker in WATCHLIST:
         try:
             q = fetch_quote_and_analysis(ticker)
-            time.sleep(0.05)
+            time.sleep(0.03)
             if not q:
-                missing.append(ticker)
                 continue
-            ok_count += 1
 
             p = q["price"]
             pct = q["pct"]
-            if abs(pct) > abs(top_move[1]):
-                top_move = (ticker, pct)
 
-            if time.time() < tg_blocked_until or sent_this_scan >= 4:
+            if time.time() < tg_blocked_until or sent_this_scan >= 8:
                 continue
 
             if ticker in signaled_today or ticker in active_trades:
@@ -598,16 +590,18 @@ def scan_new_setups(now_ksa):
             vs_ma15_pct = q["vs_ma15_pct"]
 
             bullish_setup = (
-                recent_3_pct >= 0.03
-                or (vs_ma5_pct >= 0.03 and recent_3_pct >= 0.0)
-                or (p >= ma_fast and recent_3_pct >= 0.02)
-                or (vs_ma15_pct >= 0.08 and recent_3_pct >= 0.01)
+                recent_3_pct >= 0.01
+                or (vs_ma5_pct >= 0.01 and recent_3_pct >= -0.02)
+                or (p >= ma_fast and recent_3_pct >= 0.0)
+                or (vs_ma15_pct >= 0.04 and recent_3_pct >= -0.01)
+                or pct >= 0.35
             )
             bearish_setup = (
-                recent_3_pct <= -0.03
-                or (vs_ma5_pct <= -0.03 and recent_3_pct <= 0.0)
-                or (p <= ma_fast and recent_3_pct <= -0.02)
-                or (vs_ma15_pct <= -0.08 and recent_3_pct <= -0.01)
+                recent_3_pct <= -0.01
+                or (vs_ma5_pct <= -0.01 and recent_3_pct <= 0.02)
+                or (p <= ma_fast and recent_3_pct <= 0.0)
+                or (vs_ma15_pct <= -0.04 and recent_3_pct <= 0.01)
+                or pct <= -0.35
             )
 
             if bullish_setup:
@@ -654,7 +648,7 @@ def scan_new_setups(now_ksa):
                     p, pct, entry_low, entry_high, t1, t2, sl, hold_dur_txt, exit_time_str, reason_txt
                 )
                 send_tg(msg)
-                time.sleep(1.2)
+                time.sleep(0.9)
 
             elif bearish_setup:
                 entry_low, entry_high, t1, t2, sl = compute_chart_levels("PUT", q)
@@ -700,20 +694,12 @@ def scan_new_setups(now_ksa):
                     p, pct, entry_low, entry_high, t1, t2, sl, hold_dur_txt, exit_time_str, reason_txt
                 )
                 send_tg(msg)
-                time.sleep(1.2)
+                time.sleep(0.9)
         except Exception as e:
             print(f"Scan error {ticker}: {e}")
 
     if opened_any:
         save_state()
-
-    now_ts = time.time()
-    if now_ts - last_heartbeat_ts >= 600:
-        last_heartbeat_ts = now_ts
-        miss_txt = f" | ناقص: {','.join(missing)}" if missing else ""
-        send_tg(
-            f"📡 نبضة فحص: قراءة {ok_count}/{len(WATCHLIST)} سهم{miss_txt} | أعلى حركة: {top_move[0]} ({top_move[1]:+.2f}%) | صفقات اليوم: {signal_count}"
-        )
 
 
 def main_loop():
@@ -728,7 +714,7 @@ def main_loop():
                     reset_daily_counters(today_str)
                 monitor_active_trades(now_ksa)
                 scan_new_setups(now_ksa)
-                time.sleep(10)
+                time.sleep(8)
             else:
                 if (
                     now_ksa.weekday() < 5
@@ -746,5 +732,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بالنسخة المحدثة وحفظ بيانات اليوم.")
+    send_tg("⚡ تم تشغيل البوت بالنسخة السريعة المرتبة بدون تكرار أو تعليق.")
     main_loop()
