@@ -26,6 +26,7 @@ last_heartbeat_ts = 0.0
 tg_blocked_until = 0.0
 
 MAX_HOLD_MINUTES = 90
+MIN_VOL_RATIO = 1.0  # شرط السيولة في كل الدرجات
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -260,12 +261,14 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
 
     if vol_ratio >= 1.2:
         score += 20
+    elif vol_ratio >= 1.0:
+        score += 17
     elif vol_ratio >= 0.7:
-        score += 15
+        score += 14
     elif vol_ratio >= 0.3:
-        score += 10
+        score += 9
     else:
-        score += 5
+        score += 4
 
     if side == "CALL":
         if recent_3_pct >= 0.15:
@@ -284,12 +287,12 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
 
     score = min(100, score)
 
-    if score >= 75:
-        return "elite", "⭐ نخبة", score, "مسك موجة كاملة"
+    if score >= 80 and vol_ratio >= MIN_VOL_RATIO:
+        return "elite", "⭐ نخبة", score, "مسك موجة كاملة (سيولة داعمة)"
     elif score >= 50:
-        return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة"
+        return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة (سيولة داعمة)"
     else:
-        return "good", "⚡ جيدة", score, "دخول خفيف"
+        return "good", "⚡ جيدة", score, "دخول خفيف (سيولة داعمة)"
 
 
 def build_trade_reason(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, short_high, short_low):
@@ -498,9 +501,12 @@ def scan_new_setups(now_ksa):
             if ticker in signaled_today or ticker in active_trades:
                 continue
 
+            vol_ratio = q["vol_ratio"]
+            if vol_ratio < MIN_VOL_RATIO:
+                continue
+
             ma_fast = q["ma_fast"]
             ma_slow = q["ma_slow"]
-            vol_ratio = q["vol_ratio"]
             recent_3_pct = q["recent_3_pct"]
             vs_ma5_pct = q["vs_ma5_pct"]
             vs_ma15_pct = q["vs_ma15_pct"]
@@ -648,5 +654,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بنسخة الترتيب المباشر والمريح.")
+    send_tg("⚡ تم تشغيل البوت بنسخة السيولة في كل الدرجات.")
     main_loop()
