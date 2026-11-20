@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import threading
 from datetime import datetime, time as dtime, timedelta, timezone
@@ -14,6 +15,8 @@ WATCHLIST = [
     "ROKU", "SPY", "XYZ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
+STATE_FILE = "bot_state.json"
+
 active_trades = {}
 daily_trades_log = []
 signaled_today = set()
@@ -26,7 +29,8 @@ last_heartbeat_ts = 0.0
 tg_blocked_until = 0.0
 
 MAX_HOLD_MINUTES = 90
-MIN_VOL_RATIO = 1.0  # شرط السيولة في كل الدرجات
+MIN_VOL_RATIO = 0.85
+ELITE_MIN_VOL_RATIO = 1.1
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -52,6 +56,75 @@ def run_health_server():
         except Exception as e:
             print(f"Health server error: {e}")
             time.sleep(3)
+
+
+def ksa_now():
+    return datetime.now(timezone(timedelta(hours=3)))
+
+
+def save_state():
+    try:
+        serialized_trades = {}
+        for k, tr in active_trades.items():
+            item = dict(tr)
+            if isinstance(item.get("exit_dt"), datetime):
+                item["exit_dt"] = item["exit_dt"].isoformat()
+            serialized_trades[k] = item
+
+        payload = {
+            "active_trading_date": active_trading_date,
+            "eod_reported_date": eod_reported_date,
+            "signal_count": signal_count,
+            "stats": stats,
+            "grade_counts": grade_counts,
+            "signaled_today": list(signaled_today),
+            "daily_trades_log": daily_trades_log,
+            "active_trades": serialized_trades,
+        }
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Save state error: {e}")
+
+
+def load_state():
+    global active_trades, daily_trades_log, signaled_today, signal_count
+    global stats, grade_counts, eod_reported_date, active_trading_date
+
+    if not os.path.exists(STATE_FILE):
+        return
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        today_str = ksa_now().strftime("%Y-%m-%d")
+        saved_date = data.get("active_trading_date", "")
+        if saved_date != today_str:
+            return
+
+        active_trading_date = saved_date
+        eod_reported_date = data.get("eod_reported_date", "")
+        signal_count = int(data.get("signal_count", 0))
+        stats = data.get("stats") or {"wins": 0, "losses": 0}
+        grade_counts = data.get("grade_counts") or {"elite": 0, "strong": 0, "good": 0}
+        signaled_today = set(data.get("signaled_today") or [])
+        daily_trades_log = data.get("daily_trades_log") or []
+
+        loaded_trades = {}
+        raw_trades = data.get("active_trades") or {}
+        for k, tr in raw_trades.items():
+            item = dict(tr)
+            exit_iso = item.get("exit_dt")
+            if isinstance(exit_iso, str):
+                try:
+                    item["exit_dt"] = datetime.fromisoformat(exit_iso)
+                except Exception:
+                    item["exit_dt"] = ksa_now() + timedelta(minutes=60)
+            loaded_trades[k] = item
+        active_trades = loaded_trades
+    except Exception as e:
+        print(f"Load state error: {e}")
 
 
 def send_tg(text):
@@ -82,10 +155,6 @@ def send_tg(text):
             print(f"TG Error {res.status_code}: {res.text}")
     except Exception as e:
         print(f"TG Exception: {e}")
-
-
-def ksa_now():
-    return datetime.now(timezone(timedelta(hours=3)))
 
 
 def is_us_winter_open(now_ksa):
@@ -259,16 +328,14 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
         else:
             score += 10
 
-    if vol_ratio >= 1.2:
+    if vol_ratio >= 1.3:
         score += 20
     elif vol_ratio >= 1.0:
         score += 17
-    elif vol_ratio >= 0.7:
+    elif vol_ratio >= 0.85:
         score += 14
-    elif vol_ratio >= 0.3:
-        score += 9
     else:
-        score += 4
+        score += 8
 
     if side == "CALL":
         if recent_3_pct >= 0.15:
@@ -287,12 +354,12 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
 
     score = min(100, score)
 
-    if score >= 80 and vol_ratio >= MIN_VOL_RATIO:
-        return "elite", "⭐ نخبة", score, "مسك موجة كاملة (سيولة داعمة)"
+    if score >= 78 and vol_ratio >= ELITE_MIN_VOL_RATIO:
+        return "elite", "⭐ نخبة", score, "مسك موجة كاملة (سيولة عالية)"
     elif score >= 50:
-        return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة (سيولة داعمة)"
+        return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة (سيولة جيدة)"
     else:
-        return "good", "⚡ جيدة", score, "دخول خفيف (سيولة داعمة)"
+        return "good", "⚡ جيدة", score, "دخول خفيف (سيولة جيدة)"
 
 
 def build_trade_reason(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, short_high, short_low):
@@ -315,6 +382,7 @@ def reset_daily_counters(date_str):
     active_trades = {}
     signaled_today = set()
     active_trading_date = date_str
+    save_state()
 
 
 def update_trade_log_status(num, new_status):
@@ -354,10 +422,13 @@ def send_end_of_day_report(date_str, now_ksa):
     )
     send_tg(msg)
     eod_reported_date = date_str
+    save_state()
 
 
 def monitor_active_trades(now_ksa):
     closed_tickers = []
+    changed = False
+
     for ticker, tr in list(active_trades.items()):
         try:
             q = fetch_quote_and_analysis(ticker)
@@ -367,22 +438,26 @@ def monitor_active_trades(now_ksa):
             num = tr["num"]
             side = tr["side"]
             dot = "🟢" if side == "CALL" else "🔴"
-            expired_hold = now_ksa >= tr["exit_dt"]
+            exit_dt = tr.get("exit_dt")
+            expired_hold = isinstance(exit_dt, datetime) and now_ksa >= exit_dt
+            exit_time_str = tr.get("exit_time_str", "11:55 PM")
 
             if side == "CALL":
                 if not tr["t1_hit"] and p >= tr["t1"]:
                     tr["t1_hit"] = True
                     stats["wins"] += 1
+                    changed = True
                     update_trade_log_status(num, f"حقق الهدف 1 ({p}) ومستمر للهدف 2")
                     send_tg(
                         f"🎯 {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {tr['exit_time_str']}"
+                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {exit_time_str}"
                     )
                     time.sleep(1.1)
                 if p >= tr["t2"]:
                     if not tr["t1_hit"]:
                         stats["wins"] += 1
                     stats["wins"] += 1
+                    changed = True
                     update_trade_log_status(num, f"حقق كل الأهداف ({p})")
                     send_tg(
                         f"✅ {ticker} | صفقة #{num} ({side}) {dot}\n"
@@ -392,6 +467,7 @@ def monitor_active_trades(now_ksa):
                     time.sleep(1.1)
                 elif p <= tr["sl"]:
                     stats["losses"] += 1
+                    changed = True
                     update_trade_log_status(num, f"ضرب الوقف ({p})")
                     send_tg(
                         f"❌ {ticker} | صفقة #{num} ({side}) {dot}\n"
@@ -400,11 +476,12 @@ def monitor_active_trades(now_ksa):
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
                 elif expired_hold:
+                    changed = True
                     status_txt = f"انتهت مدة الجلوس بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهت مدة الجلوس ({p})"
                     update_trade_log_status(num, status_txt)
                     send_tg(
                         f"⌛ {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"انتهت مدة الجلوس ({tr['exit_time_str']}) والسعر الآن {p}"
+                        f"انتهت مدة الجلوس ({exit_time_str}) والسعر الآن {p}"
                     )
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
@@ -412,16 +489,18 @@ def monitor_active_trades(now_ksa):
                 if not tr["t1_hit"] and p <= tr["t1"]:
                     tr["t1_hit"] = True
                     stats["wins"] += 1
+                    changed = True
                     update_trade_log_status(num, f"حقق الهدف 1 ({p}) ومستمر للهدف 2")
                     send_tg(
                         f"🎯 {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {tr['exit_time_str']}"
+                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {exit_time_str}"
                     )
                     time.sleep(1.1)
                 if p <= tr["t2"]:
                     if not tr["t1_hit"]:
                         stats["wins"] += 1
                     stats["wins"] += 1
+                    changed = True
                     update_trade_log_status(num, f"حقق كل الأهداف ({p})")
                     send_tg(
                         f"✅ {ticker} | صفقة #{num} ({side}) {dot}\n"
@@ -431,6 +510,7 @@ def monitor_active_trades(now_ksa):
                     time.sleep(1.1)
                 elif p >= tr["sl"]:
                     stats["losses"] += 1
+                    changed = True
                     update_trade_log_status(num, f"ضرب الوقف ({p})")
                     send_tg(
                         f"❌ {ticker} | صفقة #{num} ({side}) {dot}\n"
@@ -439,11 +519,12 @@ def monitor_active_trades(now_ksa):
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
                 elif expired_hold:
+                    changed = True
                     status_txt = f"انتهت مدة الجلوس بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهت مدة الجلوس ({p})"
                     update_trade_log_status(num, status_txt)
                     send_tg(
                         f"⌛ {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"انتهت مدة الجلوس ({tr['exit_time_str']}) والسعر الآن {p}"
+                        f"انتهت مدة الجلوس ({exit_time_str}) والسعر الآن {p}"
                     )
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
@@ -452,6 +533,10 @@ def monitor_active_trades(now_ksa):
 
     for t in closed_tickers:
         active_trades.pop(t, None)
+        changed = True
+
+    if changed:
+        save_state()
 
 
 def format_trade_message(prefix, num, ticker, side, grade_label, score, sizing_hint, p, pct, entry_low, entry_high, t1, t2, sl, hold_dur_txt, exit_time_str, reason_txt):
@@ -480,6 +565,7 @@ def scan_new_setups(now_ksa):
     missing = []
     top_move = ("-", 0.0)
     sent_this_scan = 0
+    opened_any = False
 
     for ticker in WATCHLIST:
         try:
@@ -531,6 +617,7 @@ def scan_new_setups(now_ksa):
                 signal_count += 1
                 sent_this_scan += 1
                 signaled_today.add(ticker)
+                opened_any = True
 
                 grade_key, grade_label, score, sizing_hint = score_and_grade(
                     "CALL", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
@@ -576,6 +663,7 @@ def scan_new_setups(now_ksa):
                 signal_count += 1
                 sent_this_scan += 1
                 signaled_today.add(ticker)
+                opened_any = True
 
                 grade_key, grade_label, score, sizing_hint = score_and_grade(
                     "PUT", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
@@ -616,8 +704,11 @@ def scan_new_setups(now_ksa):
         except Exception as e:
             print(f"Scan error {ticker}: {e}")
 
+    if opened_any:
+        save_state()
+
     now_ts = time.time()
-    if now_ts - last_heartbeat_ts >= 300:
+    if now_ts - last_heartbeat_ts >= 600:
         last_heartbeat_ts = now_ts
         miss_txt = f" | ناقص: {','.join(missing)}" if missing else ""
         send_tg(
@@ -626,6 +717,7 @@ def scan_new_setups(now_ksa):
 
 
 def main_loop():
+    load_state()
     while True:
         try:
             now_ksa = ksa_now()
@@ -654,5 +746,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بنسخة السيولة في كل الدرجات.")
+    send_tg("⚡ تم تشغيل البوت بالنسخة المحدثة وحفظ بيانات اليوم.")
     main_loop()
