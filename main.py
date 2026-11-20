@@ -15,6 +15,7 @@ WATCHLIST = [
 ]
 
 active_trades = {}
+daily_trades_log = []
 last_signaled_price = {}
 signal_count = 0
 stats = {"wins": 0, "losses": 0}
@@ -204,6 +205,27 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
         return "good", "⚡ جيدة", score, "دخول خفيف / متابعة"
 
 
+def build_trade_reason(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, grade_label, score):
+    if side == "CALL":
+        ma_note = (
+            "السعر أعلى من MA5 وMA5 أعلى من MA15 (ترتيب صاعد واضح)"
+            if (price >= ma_fast and ma_fast >= ma_slow)
+            else f"السعر قريب/أعلى من MA5 بفارق {vs_ma5_pct:+.2f}%"
+        )
+        mom_note = f"حركة آخر 3 شمعات إيجابية ({recent_3_pct:+.2f}%)"
+    else:
+        ma_note = (
+            "السعر أدنى من MA5 وMA5 أدنى من MA15 (ترتيب هابط واضح)"
+            if (price <= ma_fast and ma_fast <= ma_slow)
+            else f"السعر قريب/أدنى من MA5 بفارق {vs_ma5_pct:+.2f}%"
+        )
+        mom_note = f"حركة آخر 3 شمعات سلبية ({recent_3_pct:+.2f}%)"
+
+    vol_note = f"حجم التداول {vol_ratio}x مقارنة بالمتوسط"
+    day_note = f"التغير اليومي {pct:+.2f}%"
+    return f"{mom_note}، {ma_note}، {vol_note}، {day_note} — التقييم {grade_label} ({score}/100)."
+
+
 def format_target_eta(current_price, target_price, avg_5m_move):
     dist = abs(target_price - current_price)
     bars_needed = max(1.0, dist / max(avg_5m_move, 0.01))
@@ -226,15 +248,23 @@ def can_signal_again(ticker, current_price):
     if prev is None or prev <= 0:
         return True
     move_pct = abs(current_price - prev) / prev * 100
-    return move_pct >= 0.12
+    return move_pct >= 0.06
 
 
 def reset_daily_counters(date_str):
-    global signal_count, stats, grade_counts, active_trading_date
+    global signal_count, stats, grade_counts, daily_trades_log, active_trading_date
     signal_count = 0
     stats = {"wins": 0, "losses": 0}
     grade_counts = {"elite": 0, "strong": 0, "good": 0}
+    daily_trades_log = []
     active_trading_date = date_str
+
+
+def update_trade_log_status(num, new_status):
+    for item in daily_trades_log:
+        if item["num"] == num:
+            item["status"] = new_status
+            break
 
 
 def send_end_of_day_report(date_str, now_ksa):
@@ -243,10 +273,20 @@ def send_end_of_day_report(date_str, now_ksa):
     decided = stats["wins"] + stats["losses"]
     win_rate = round((stats["wins"] / decided) * 100, 1) if decided > 0 else 0.0
 
+    if daily_trades_log:
+        companies_lines = "\n".join(
+            f"#{t['num']} {t['ticker']} ({t['side']}) [{t['grade']}] — {t['status']}"
+            for t in daily_trades_log
+        )
+    else:
+        companies_lines = "لا توجد صفقات مسجلة اليوم."
+
     msg = (
         f"📊 تقرير نهاية اليوم ({date_str})\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"📌 صفقات اليوم: {signal_count}\n"
+        f"🏢 أسماء الشركات وصفقات اليوم:\n{companies_lines}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📌 إجمالي صفقات اليوم: {signal_count}\n"
         f"🏅 الدرجات: ⭐ نخبة ({grade_counts['elite']}) | 🔥 ممتازة ({grade_counts['strong']}) | ⚡ جيدة ({grade_counts['good']})\n"
         f"✅ أهداف محققة اليوم: {stats['wins']}\n"
         f"❌ ضربت الوقف اليوم: {stats['losses']}\n"
@@ -274,31 +314,37 @@ def monitor_active_trades():
                 if not tr["t1_hit"] and p >= tr["t1"]:
                     tr["t1_hit"] = True
                     stats["wins"] += 1
-                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 1 (${p})")
+                    update_trade_log_status(num, f"حقق الهدف 1 (${p})")
+                    send_tg(f"✅ صفقة #{num} — {ticker} حققت الهدف 1 (${p})")
                 if p >= tr["t2"]:
                     if not tr["t1_hit"]:
                         stats["wins"] += 1
                     stats["wins"] += 1
-                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 2 (${p})")
+                    update_trade_log_status(num, f"حقق الهدف 2 (${p})")
+                    send_tg(f"✅ صفقة #{num} — {ticker} حققت الهدف 2 (${p})")
                     done.append(trade_key)
                 elif p <= tr["sl"]:
                     stats["losses"] += 1
-                    send_tg(f"❌ رقم {num} — {ticker} ضرب الوقف (${p})")
+                    update_trade_log_status(num, f"ضرب الوقف (${p})")
+                    send_tg(f"❌ صفقة #{num} — {ticker} ضربت الوقف (${p})")
                     done.append(trade_key)
             else:
                 if not tr["t1_hit"] and p <= tr["t1"]:
                     tr["t1_hit"] = True
                     stats["wins"] += 1
-                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 1 (${p})")
+                    update_trade_log_status(num, f"حقق الهدف 1 (${p})")
+                    send_tg(f"✅ صفقة #{num} — {ticker} حقق الهدف 1 (${p})")
                 if p <= tr["t2"]:
                     if not tr["t1_hit"]:
                         stats["wins"] += 1
                     stats["wins"] += 1
-                    send_tg(f"✅ رقم {num} — {ticker} حقق الهدف 2 (${p})")
+                    update_trade_log_status(num, f"حقق الهدف 2 (${p})")
+                    send_tg(f"✅ صفقة #{num} — {ticker} حقق الهدف 2 (${p})")
                     done.append(trade_key)
                 elif p >= tr["sl"]:
                     stats["losses"] += 1
-                    send_tg(f"❌ رقم {num} — {ticker} ضرب الوقف (${p})")
+                    update_trade_log_status(num, f"ضرب الوقف (${p})")
+                    send_tg(f"❌ صفقة #{num} — {ticker} ضربت الوقف (${p})")
                     done.append(trade_key)
         except Exception as e:
             print(f"Monitor error {trade_key}: {e}")
@@ -337,8 +383,8 @@ def scan_new_setups():
             vs_ma5_pct = q["vs_ma5_pct"]
             step_move = max(q["avg_5m_move"], p * 0.0025)
 
-            bullish_setup = (vol_ratio >= 0.05) and (recent_3_pct >= 0.08 or vs_ma5_pct >= 0.12)
-            bearish_setup = (vol_ratio >= 0.05) and (recent_3_pct <= -0.08 or vs_ma5_pct <= -0.12)
+            bullish_setup = (vol_ratio >= 0.01) and (recent_3_pct >= 0.02 or vs_ma5_pct >= 0.04)
+            bearish_setup = (vol_ratio >= 0.01) and (recent_3_pct <= -0.02 or vs_ma5_pct <= -0.04)
 
             if bullish_setup:
                 signal_count += 1
@@ -356,6 +402,9 @@ def scan_new_setups():
 
                 eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
                 eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
+                reason_txt = build_trade_reason(
+                    "CALL", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, grade_label, score
+                )
 
                 active_trades[trade_key] = {
                     "num": signal_count,
@@ -366,6 +415,13 @@ def scan_new_setups():
                     "sl": sl,
                     "t1_hit": False
                 }
+                daily_trades_log.append({
+                    "num": signal_count,
+                    "ticker": ticker,
+                    "side": "CALL",
+                    "grade": grade_label,
+                    "status": "متابعة"
+                })
                 last_signaled_price[ticker] = p
 
                 prefix = "🚨 فرصة نخبة!\n" if grade_key == "elite" else ""
@@ -373,6 +429,7 @@ def scan_new_setups():
                     f"{prefix}🟢 صفقة #{signal_count} — {ticker} (CALL) | {grade_label} ({score}/100)\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"🏅 الدرجة: {grade_label} — {sizing_hint}\n"
+                    f"🧠 سبب إرسال الصفقة: {reason_txt}\n"
                     f"💵 السعر الحالي: ${p} (pct: {pct:+.2f}%)\n"
                     f"📍 منطقة الدخول: ${entry_low} — ${entry_high}\n"
                     f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
@@ -399,6 +456,9 @@ def scan_new_setups():
 
                 eta_t1 = format_target_eta(p, t1, q["avg_5m_move"])
                 eta_t2 = format_target_eta(p, t2, q["avg_5m_move"])
+                reason_txt = build_trade_reason(
+                    "PUT", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, grade_label, score
+                )
 
                 active_trades[trade_key] = {
                     "num": signal_count,
@@ -409,6 +469,13 @@ def scan_new_setups():
                     "sl": sl,
                     "t1_hit": False
                 }
+                daily_trades_log.append({
+                    "num": signal_count,
+                    "ticker": ticker,
+                    "side": "PUT",
+                    "grade": grade_label,
+                    "status": "متابعة"
+                })
                 last_signaled_price[ticker] = p
 
                 prefix = "🚨 فرصة نخبة!\n" if grade_key == "elite" else ""
@@ -416,6 +483,7 @@ def scan_new_setups():
                     f"{prefix}🔴 صفقة #{signal_count} — {ticker} (PUT) | {grade_label} ({score}/100)\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"🏅 الدرجة: {grade_label} — {sizing_hint}\n"
+                    f"🧠 سبب إرسال الصفقة: {reason_txt}\n"
                     f"💵 السعر الحالي: ${p} (pct: {pct:+.2f}%)\n"
                     f"📍 منطقة الدخول: ${entry_low} — ${entry_high}\n"
                     f"🎯 الهدف 1: ${t1} — المتوقع: {eta_t1}\n"
@@ -466,5 +534,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بنسخة الصفقات المتدفقة (بدون تقييد pct).")
+    send_tg("⚡ تم تشغيل البوت بنسخة الترقيم، شرح السبب، وتقرير الشركات.")
     main_loop()
