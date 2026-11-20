@@ -106,15 +106,17 @@ def fetch_quote_and_analysis(ticker):
         highs = [h for h in (quote.get("high") or []) if h is not None]
         volumes = [v for v in (quote.get("volume") or []) if v is not None]
 
-        if len(closes) < 4:
+        if len(closes) < 3:
             return None
 
         pct = ((price - prev_close) / prev_close) * 100
         ma_fast = sum(closes[-5:]) / min(len(closes), 5)
         ma_slow = sum(closes[-15:]) / min(len(closes), 15)
 
-        recent_3_change_pct = ((closes[-1] - closes[-3]) / closes[-3]) * 100 if closes[-3] > 0 else 0.0
+        ref_3 = closes[-3] if len(closes) >= 3 else closes[0]
+        recent_3_change_pct = ((closes[-1] - ref_3) / ref_3) * 100 if ref_3 > 0 else 0.0
         vs_ma5_pct = ((price - ma_fast) / ma_fast) * 100 if ma_fast > 0 else 0.0
+        vs_ma15_pct = ((price - ma_slow) / ma_slow) * 100 if ma_slow > 0 else 0.0
 
         avg_vol = (sum(volumes[:-1]) / max(1, len(volumes) - 1)) if len(volumes) > 1 else 0
         last_vol = volumes[-1] if volumes else 0
@@ -133,6 +135,7 @@ def fetch_quote_and_analysis(ticker):
             "ma_slow": round(float(ma_slow), 2),
             "recent_3_pct": round(float(recent_3_change_pct), 2),
             "vs_ma5_pct": round(float(vs_ma5_pct), 2),
+            "vs_ma15_pct": round(float(vs_ma15_pct), 2),
             "vol_ratio": vol_ratio,
             "swing_low": round(float(swing_low), 2),
             "swing_high": round(float(swing_high), 2),
@@ -207,23 +210,26 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
 
 def build_trade_reason(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct, vs_ma5_pct, grade_label, score):
     if side == "CALL":
-        ma_note = (
-            "السعر أعلى من MA5 وMA5 أعلى من MA15 (ترتيب صاعد واضح)"
-            if (price >= ma_fast and ma_fast >= ma_slow)
-            else f"السعر قريب/أعلى من MA5 بفارق {vs_ma5_pct:+.2f}%"
-        )
-        mom_note = f"حركة آخر 3 شمعات إيجابية ({recent_3_pct:+.2f}%)"
+        if price >= ma_fast and ma_fast >= ma_slow:
+            ma_note = "ترتيب صاعد داعم (السعر >= MA5 وMA5 >= MA15)"
+        elif vs_ma5_pct >= 0:
+            ma_note = f"تفاعل إيجابي حول/فوق MA5 ({vs_ma5_pct:+.2f}%)"
+        else:
+            ma_note = f"محاولة ارتداد فني قريب من MA5 ({vs_ma5_pct:+.2f}%)"
+        mom_note = f"آخر 3 شمعات ({recent_3_pct:+.2f}%)"
     else:
-        ma_note = (
-            "السعر أدنى من MA5 وMA5 أدنى من MA15 (ترتيب هابط واضح)"
-            if (price <= ma_fast and ma_fast <= ma_slow)
-            else f"السعر قريب/أدنى من MA5 بفارق {vs_ma5_pct:+.2f}%"
-        )
-        mom_note = f"حركة آخر 3 شمعات سلبية ({recent_3_pct:+.2f}%)"
+        if price <= ma_fast and ma_fast <= ma_slow:
+            ma_note = "ترتيب هابط ضاغط (السعر <= MA5 وMA5 <= MA15)"
+        elif vs_ma5_pct <= 0:
+            ma_note = f"ضغط/ضعف حول/تحت MA5 ({vs_ma5_pct:+.2f}%)"
+        else:
+            ma_note = f"محاولة تراجع فني قريب من MA5 ({vs_ma5_pct:+.2f}%)"
+        mom_note = f"آخر 3 شمعات ({recent_3_pct:+.2f}%)"
 
-    vol_note = f"حجم التداول {vol_ratio}x مقارنة بالمتوسط"
-    day_note = f"التغير اليومي {pct:+.2f}%"
-    return f"{mom_note}، {ma_note}، {vol_note}، {day_note} — التقييم {grade_label} ({score}/100)."
+    return (
+        f"{mom_note}، {ma_note}، حجم {vol_ratio}x، تغير يومي {pct:+.2f}% — "
+        f"التقييم {grade_label} ({score}/100)."
+    )
 
 
 def format_target_eta(current_price, target_price, avg_5m_move):
@@ -248,7 +254,7 @@ def can_signal_again(ticker, current_price):
     if prev is None or prev <= 0:
         return True
     move_pct = abs(current_price - prev) / prev * 100
-    return move_pct >= 0.06
+    return move_pct >= 0.03
 
 
 def reset_daily_counters(date_str):
@@ -339,7 +345,7 @@ def monitor_active_trades():
                         stats["wins"] += 1
                     stats["wins"] += 1
                     update_trade_log_status(num, f"حقق الهدف 2 (${p})")
-                    send_tg(f"✅ صفقة #{num} — {ticker} حقق الهدف 2 (${p})")
+                    send_tg(f"✅ صفقة #{num} — {ticker} حققت الهدف 2 (${p})")
                     done.append(trade_key)
                 elif p >= tr["sl"]:
                     stats["losses"] += 1
@@ -381,10 +387,21 @@ def scan_new_setups():
             vol_ratio = q["vol_ratio"]
             recent_3_pct = q["recent_3_pct"]
             vs_ma5_pct = q["vs_ma5_pct"]
+            vs_ma15_pct = q["vs_ma15_pct"]
             step_move = max(q["avg_5m_move"], p * 0.0025)
 
-            bullish_setup = (vol_ratio >= 0.01) and (recent_3_pct >= 0.02 or vs_ma5_pct >= 0.04)
-            bearish_setup = (vol_ratio >= 0.01) and (recent_3_pct <= -0.02 or vs_ma5_pct <= -0.04)
+            bullish_setup = (
+                recent_3_pct >= 0.01
+                or vs_ma5_pct >= 0.01
+                or (p >= ma_fast and recent_3_pct > -0.02)
+                or (vs_ma15_pct >= 0.05 and recent_3_pct >= 0.0)
+            )
+            bearish_setup = (
+                recent_3_pct <= -0.01
+                or vs_ma5_pct <= -0.01
+                or (p <= ma_fast and recent_3_pct < 0.02)
+                or (vs_ma15_pct <= -0.05 and recent_3_pct <= 0.0)
+            )
 
             if bullish_setup:
                 signal_count += 1
@@ -438,7 +455,7 @@ def scan_new_setups():
                     f"📊 التحليل: pct {pct:+.2f}% | 3 شمعات {recent_3_pct:+.2f}% | MA5 ${ma_fast}/MA15 ${ma_slow} | حجم {vol_ratio}x"
                 )
                 send_tg(msg)
-                time.sleep(0.25)
+                time.sleep(0.2)
 
             elif bearish_setup:
                 signal_count += 1
@@ -492,7 +509,7 @@ def scan_new_setups():
                     f"📊 التحليل: pct {pct:+.2f}% | 3 شمعات {recent_3_pct:+.2f}% | MA5 ${ma_fast}/MA15 ${ma_slow} | حجم {vol_ratio}x"
                 )
                 send_tg(msg)
-                time.sleep(0.25)
+                time.sleep(0.2)
         except Exception as e:
             print(f"Scan error {ticker}: {e}")
 
@@ -534,5 +551,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بنسخة الترقيم، شرح السبب، وتقرير الشركات.")
+    send_tg("⚡ تم تشغيل البوت بنسخة التحليل الموسع والصفقات النشطة.")
     main_loop()
