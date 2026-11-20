@@ -94,6 +94,18 @@ def is_us_winter_open(now_ksa):
     return dtime(17, 30) <= t <= dtime(23, 59)
 
 
+def find_swing_highs_lows(highs, lows):
+    swing_highs = []
+    swing_lows = []
+    n = len(highs)
+    for i in range(1, n - 1):
+        if highs[i] > highs[i - 1] and highs[i] >= highs[i + 1]:
+            swing_highs.append(float(highs[i]))
+        if lows[i] < lows[i - 1] and lows[i] <= lows[i + 1]:
+            swing_lows.append(float(lows[i]))
+    return swing_highs, swing_lows
+
+
 def fetch_quote_and_analysis(ticker):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=5d"
     try:
@@ -119,16 +131,19 @@ def fetch_quote_and_analysis(ticker):
         if not price or not prev_close:
             return None
 
-        closes = [c for c in (quote.get("close") or []) if c is not None]
-        lows = [l for l in (quote.get("low") or []) if l is not None]
-        highs = [h for h in (quote.get("high") or []) if h is not None]
-        volumes = [v for v in (quote.get("volume") or []) if v is not None]
+        closes = [float(c) for c in (quote.get("close") or []) if c is not None]
+        lows = [float(l) for l in (quote.get("low") or []) if l is not None]
+        highs = [float(h) for h in (quote.get("high") or []) if h is not None]
+        volumes = [float(v) for v in (quote.get("volume") or []) if v is not None]
 
-        if len(closes) < 4 or len(highs) < 4 or len(lows) < 4:
+        if len(closes) < 10 or len(highs) < 10 or len(lows) < 10:
             return None
 
+        price = float(price)
+        prev_close = float(prev_close)
+
         pct = ((price - prev_close) / prev_close) * 100
-        ma_fast = sum(closes[-5:]) / min(len(closes), 5)
+        ma_fast = sum(closes[-5:]) / 5.0
         ma_slow = sum(closes[-15:]) / min(len(closes), 15)
 
         ref_3 = closes[-3] if len(closes) >= 3 else closes[0]
@@ -136,32 +151,38 @@ def fetch_quote_and_analysis(ticker):
         vs_ma5_pct = ((price - ma_fast) / ma_fast) * 100 if ma_fast > 0 else 0.0
         vs_ma15_pct = ((price - ma_slow) / ma_slow) * 100 if ma_slow > 0 else 0.0
 
-        valid_vols = [v for v in volumes[:-1] if v is not None and v > 0]
-        avg_vol = (sum(valid_vols) / len(valid_vols)) if valid_vols else 0
-        last_vol = volumes[-1] if (volumes and volumes[-1] is not None) else 0
+        valid_vols = [v for v in volumes[:-1] if v > 0]
+        avg_vol = (sum(valid_vols) / len(valid_vols)) if valid_vols else 0.0
+        last_vol = volumes[-1] if volumes else 0.0
         vol_ratio = round((last_vol / avg_vol), 2) if (avg_vol > 0 and last_vol > 0) else 0.0
+
+        recent_highs = highs[-30:] if len(highs) >= 30 else highs
+        recent_lows = lows[-30:] if len(lows) >= 30 else lows
+        swing_highs, swing_lows = find_swing_highs_lows(recent_highs, recent_lows)
 
         short_high = max(highs[-6:])
         short_low = min(lows[-6:])
-        chart_high = max(highs[-20:])
-        chart_low = min(lows[-20:])
+        chart_high = max(recent_highs)
+        chart_low = min(recent_lows)
 
-        ranges = [h - l for h, l in zip(highs[-15:], lows[-15:]) if h is not None and l is not None and h > l]
+        ranges = [h - l for h, l in zip(highs[-15:], lows[-15:]) if h > l]
         avg_5m_move = max(sum(ranges) / len(ranges), price * 0.002) if ranges else price * 0.0025
 
         return {
-            "price": round(float(price), 2),
-            "pct": round(float(pct), 2),
-            "ma_fast": round(float(ma_fast), 2),
-            "ma_slow": round(float(ma_slow), 2),
-            "recent_3_pct": round(float(recent_3_change_pct), 2),
-            "vs_ma5_pct": round(float(vs_ma5_pct), 2),
-            "vs_ma15_pct": round(float(vs_ma15_pct), 2),
+            "price": round(price, 2),
+            "pct": round(pct, 2),
+            "ma_fast": round(ma_fast, 2),
+            "ma_slow": round(ma_slow, 2),
+            "recent_3_pct": round(recent_3_change_pct, 2),
+            "vs_ma5_pct": round(vs_ma5_pct, 2),
+            "vs_ma15_pct": round(vs_ma15_pct, 2),
             "vol_ratio": vol_ratio,
-            "short_high": round(float(short_high), 2),
-            "short_low": round(float(short_low), 2),
-            "chart_high": round(float(chart_high), 2),
-            "chart_low": round(float(chart_low), 2),
+            "short_high": round(short_high, 2),
+            "short_low": round(short_low, 2),
+            "chart_high": round(chart_high, 2),
+            "chart_low": round(chart_low, 2),
+            "swing_highs": [round(x, 2) for x in swing_highs],
+            "swing_lows": [round(x, 2) for x in swing_lows],
             "avg_5m_move": float(avg_5m_move)
         }
     except Exception as e:
@@ -173,42 +194,67 @@ def compute_chart_levels(side, q):
     p = q["price"]
     step = q["avg_5m_move"]
     ma_fast = q["ma_fast"]
+    buffer_amt = max(step * 0.25, p * 0.0008)
 
     if side == "CALL":
-        sl_candidate = min(q["short_low"], ma_fast) - (step * 0.35)
-        if sl_candidate >= p:
-            sl_candidate = p - (step * 1.4)
-        sl = round(sl_candidate, 2)
+        lows_below = sorted([x for x in q["swing_lows"] if x < p], reverse=True)
+        if lows_below:
+            sl_base = lows_below[1] if len(lows_below) > 1 else lows_below[0]
+            sl = round(sl_base - buffer_amt, 2)
+        else:
+            sl = round(min(q["short_low"], ma_fast) - buffer_amt, 2)
+        if sl >= p:
+            sl = round(p - max(step * 1.2, p * 0.003), 2)
 
-        t1_candidate = max(q["short_high"], p + (step * 2.2))
-        if t1_candidate <= p * 1.004:
-            t1_candidate = p + (step * 2.5)
+        highs_above = sorted([x for x in q["swing_highs"] if x > p])
+        min_t1 = p + max(step * 1.5, p * 0.0025)
+        above_min_t1 = [x for x in highs_above if x >= min_t1]
+        if above_min_t1:
+            t1 = round(above_min_t1[0], 2)
+        elif highs_above:
+            t1 = round(max(highs_above[-1], min_t1), 2)
+        else:
+            t1 = round(max(q["short_high"], min_t1), 2)
 
-        t2_candidate = max(q["chart_high"], t1_candidate + (step * 2.0))
-        if t2_candidate <= t1_candidate:
-            t2_candidate = t1_candidate + (step * 2.2)
+        above_t1 = [x for x in highs_above if x > t1 + max(step * 0.8, p * 0.0015)]
+        if above_t1:
+            t2 = round(above_t1[0], 2)
+        else:
+            t2 = round(max(q["chart_high"], t1 + max(step * 1.5, p * 0.0025)), 2)
 
-        low_zone = min(p, ma_fast) if abs(p - ma_fast) <= step * 1.5 else p - (step * 0.3)
-        high_zone = max(p, low_zone + (step * 0.4))
-        return round(low_zone, 2), round(high_zone, 2), round(t1_candidate, 2), round(t2_candidate, 2), sl
+        low_zone = round(min(p, ma_fast) if abs(p - ma_fast) <= step * 1.2 else p - (step * 0.2), 2)
+        high_zone = round(max(p, low_zone + (step * 0.3)), 2)
+        return low_zone, high_zone, t1, t2, sl
 
     else:
-        sl_candidate = max(q["short_high"], ma_fast) + (step * 0.35)
-        if sl_candidate <= p:
-            sl_candidate = p + (step * 1.4)
-        sl = round(sl_candidate, 2)
+        highs_above = sorted([x for x in q["swing_highs"] if x > p])
+        if highs_above:
+            sl_base = highs_above[1] if len(highs_above) > 1 else highs_above[0]
+            sl = round(sl_base + buffer_amt, 2)
+        else:
+            sl = round(max(q["short_high"], ma_fast) + buffer_amt, 2)
+        if sl <= p:
+            sl = round(p + max(step * 1.2, p * 0.003), 2)
 
-        t1_candidate = min(q["short_low"], p - (step * 2.2))
-        if t1_candidate >= p * 0.996:
-            t1_candidate = p - (step * 2.5)
+        lows_below = sorted([x for x in q["swing_lows"] if x < p], reverse=True)
+        max_t1 = p - max(step * 1.5, p * 0.0025)
+        below_max_t1 = [x for x in lows_below if x <= max_t1]
+        if below_max_t1:
+            t1 = round(below_max_t1[0], 2)
+        elif lows_below:
+            t1 = round(min(lows_below[-1], max_t1), 2)
+        else:
+            t1 = round(min(q["short_low"], max_t1), 2)
 
-        t2_candidate = min(q["chart_low"], t1_candidate - (step * 2.0))
-        if t2_candidate >= t1_candidate:
-            t2_candidate = t1_candidate - (step * 2.2)
+        below_t1 = [x for x in lows_below if x < t1 - max(step * 0.8, p * 0.0015)]
+        if below_t1:
+            t2 = round(below_t1[0], 2)
+        else:
+            t2 = round(min(q["chart_low"], t1 - max(step * 1.5, p * 0.0025)), 2)
 
-        high_zone = max(p, ma_fast) if abs(p - ma_fast) <= step * 1.5 else p + (step * 0.3)
-        low_zone = min(p, high_zone - (step * 0.4))
-        return round(low_zone, 2), round(high_zone, 2), round(t1_candidate, 2), round(t2_candidate, 2), sl
+        high_zone = round(max(p, ma_fast) if abs(p - ma_fast) <= step * 1.2 else p + (step * 0.2), 2)
+        low_zone = round(min(p, high_zone - (step * 0.3)), 2)
+        return low_zone, high_zone, t1, t2, sl
 
 
 def compute_session_hold_info(now_ksa, current_price, target_price, avg_5m_move):
@@ -492,7 +538,7 @@ def scan_new_setups(now_ksa):
             if abs(pct) > abs(top_move[1]):
                 top_move = (ticker, pct)
 
-            if time.time() < tg_blocked_until or sent_this_scan >= 4:
+            if time.time() < tg_blocked_until or sent_this_scan >= 3:
                 continue
 
             if ticker in signaled_today or ticker in active_trades:
@@ -505,17 +551,16 @@ def scan_new_setups(now_ksa):
             vs_ma5_pct = q["vs_ma5_pct"]
             vs_ma15_pct = q["vs_ma15_pct"]
 
+            # تصفية أوضح لتجنب فتح صفقات عشوائية على كل الأسهم دفعة واحدة
             bullish_setup = (
-                recent_3_pct >= 0.03
-                or (vs_ma5_pct >= 0.03 and recent_3_pct >= 0.0)
-                or (p >= ma_fast and recent_3_pct >= 0.02)
-                or (vs_ma15_pct >= 0.08 and recent_3_pct >= 0.01)
+                recent_3_pct >= 0.12
+                and (p >= ma_fast or vs_ma5_pct >= 0.05)
+                and (abs(pct) >= 0.35 or recent_3_pct >= 0.18)
             )
             bearish_setup = (
-                recent_3_pct <= -0.03
-                or (vs_ma5_pct <= -0.03 and recent_3_pct <= 0.0)
-                or (p <= ma_fast and recent_3_pct <= -0.02)
-                or (vs_ma15_pct <= -0.08 and recent_3_pct <= -0.01)
+                recent_3_pct <= -0.12
+                and (p <= ma_fast or vs_ma5_pct <= -0.05)
+                and (abs(pct) >= 0.35 or recent_3_pct <= -0.18)
             )
 
             if bullish_setup:
@@ -648,5 +693,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بنسخة الترتيب المباشر والمريح.")
+    send_tg("⚡ تم تشغيل البوت بمستويات الشارت الحقيقية وتصفية أصدق للفرص.")
     main_loop()
