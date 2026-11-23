@@ -25,9 +25,6 @@ active_trading_date = ""
 last_heartbeat_ts = 0.0
 tg_blocked_until = 0.0
 
-MAX_HOLD_MINUTES = 120
-MIN_HOLD_MINUTES = 20
-
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
@@ -107,6 +104,27 @@ def find_swing_highs_lows(highs, lows):
     return swing_highs, swing_lows
 
 
+def fetch_daily_avg_move(ticker, fallback_price):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=3mo"
+    try:
+        r = SESSION.get(url, timeout=6)
+        if r.status_code != 200:
+            return max(fallback_price * 0.015, 0.05)
+        data = r.json()
+        results = (data.get("chart") or {}).get("result") or []
+        if not results:
+            return max(fallback_price * 0.015, 0.05)
+        quote = (((results[0] or {}).get("indicators") or {}).get("quote") or [{}])[0] or {}
+        d_highs = [float(h) for h in (quote.get("high") or []) if h is not None]
+        d_lows = [float(l) for l in (quote.get("low") or []) if l is not None]
+        daily_ranges = [h - l for h, l in zip(d_highs[-20:], d_lows[-20:]) if h > l]
+        if daily_ranges:
+            return max(sum(daily_ranges) / len(daily_ranges), fallback_price * 0.008)
+    except Exception:
+        pass
+    return max(fallback_price * 0.015, 0.05)
+
+
 def fetch_quote_and_analysis(ticker):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=5d"
     try:
@@ -171,10 +189,10 @@ def fetch_quote_and_analysis(ticker):
         chart_high = max(recent_highs)
         chart_low = min(recent_lows)
 
-        # نطاق ذبذبة آخر 6 شمعات + متوسط حركة الشموع الفعلية
         chop_range_pct = ((short_high - short_low) / short_low) * 100 if short_low > 0 else 0.0
         ranges = [h - l for h, l in zip(highs[-15:], lows[-15:]) if h > l and (h - l) <= price * 0.03]
-        avg_5m_move = max(sum(ranges) / len(ranges), price * 0.0015) if ranges else price * 0.002
+        avg_5m_move = max(sum(ranges) / len(ranges), price * 0.0012) if ranges else price * 0.0018
+        avg_daily_move = fetch_daily_avg_move(ticker, price)
 
         return {
             "price": round(price, 2),
@@ -194,7 +212,8 @@ def fetch_quote_and_analysis(ticker):
             "chart_low": round(chart_low, 2),
             "swing_highs": [round(x, 2) for x in swing_highs],
             "swing_lows": [round(x, 2) for x in swing_lows],
-            "avg_5m_move": float(avg_5m_move)
+            "avg_5m_move": float(avg_5m_move),
+            "avg_daily_move": float(avg_daily_move)
         }
     except Exception as e:
         print(f"Analysis error {ticker}: {e}")
@@ -202,11 +221,6 @@ def fetch_quote_and_analysis(ticker):
 
 
 def is_clean_candle_flow(side, q):
-    """
-    فلترة الذبذبة الميتة أو الشمعة المنفردة المتضخمة:
-    - استبعاد النطاق الميت الضيق جداً (< 0.25%)
-    - استبعاد الشمعة السابقة المنفردة المتضخمة التي يعقبها ارتداد معاكس قوي في الشمعة الأخيرة
-    """
     if q["chop_range_pct"] < 0.25:
         return False
 
@@ -290,28 +304,44 @@ def compute_chart_levels(side, q):
         return low_zone, high_zone, t1, t2, sl
 
 
-def compute_session_hold_info(now_ksa, current_price, target_price, avg_5m_move, recent_3_pct, side):
+def estimate_duration_label(now_ksa, current_price, target_price, avg_daily_move):
     dist = abs(target_price - current_price)
-    step = max(avg_5m_move, 0.01)
-    candles_needed = dist / step
+    day_move = max(avg_daily_move, 0.01)
+    est_days = dist / day_move
 
-    aligned_momentum = (side == "CALL" and recent_3_pct >= 0.15) or (side == "PUT" and recent_3_pct <= -0.15)
-    pace_factor = 1.15 if aligned_momentum else 1.45
-
-    raw_mins = candles_needed * 5.0 * pace_factor
-    hold_mins = max(MIN_HOLD_MINUTES, min(MAX_HOLD_MINUTES, int(round(raw_mins))))
-
-    session_end_dt = now_ksa.replace(hour=23, minute=55, second=0, microsecond=0)
-    exit_dt = min(now_ksa + timedelta(minutes=hold_mins), session_end_dt)
-    actual_mins = max(5, int((exit_dt - now_ksa).total_seconds() // 60))
-
-    if actual_mins < 60:
-        dur_txt = f"{actual_mins} دقيقة"
+    if est_days <= 0.15:
+        label = "ساعة"
+        max_days = 1
+    elif est_days <= 0.35:
+        label = "ساعتين"
+        max_days = 1
+    elif est_days <= 0.65:
+        label = "3 ساعات"
+        max_days = 1
+    elif est_days <= 1.15:
+        label = "4 ساعات"
+        max_days = 2
+    elif est_days <= 1.85:
+        label = "يوم"
+        max_days = 2
+    elif est_days <= 2.6:
+        label = "يومين"
+        max_days = 3
+    elif est_days <= 4.0:
+        label = "3 أيام"
+        max_days = 5
+    elif est_days <= 8.0:
+        label = "أسبوع"
+        max_days = 10
+    elif est_days <= 22.0:
+        label = "شهر"
+        max_days = 35
     else:
-        hrs = round(actual_mins / 60, 1)
-        dur_txt = f"{hrs} ساعة"
+        label = "شهرين"
+        max_days = 65
 
-    return exit_dt, exit_dt.strftime("%I:%M %p"), dur_txt
+    exit_dt = now_ksa + timedelta(days=max_days)
+    return exit_dt, label
 
 
 def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct):
@@ -483,7 +513,7 @@ def monitor_active_trades(now_ksa):
                     update_trade_log_status(num, f"حقق الهدف 1 ({p}) ومستمر للهدف 2")
                     send_tg(
                         f"🎯 {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {tr['exit_time_str']}"
+                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']})"
                     )
                     time.sleep(1.1)
                 if p >= tr["t2"]:
@@ -507,11 +537,11 @@ def monitor_active_trades(now_ksa):
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
                 elif expired_hold:
-                    status_txt = f"انتهت مدة الجلوس بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهت مدة الجلوس ({p})"
+                    status_txt = f"انتهى الإطار بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهى الإطار ({p})"
                     update_trade_log_status(num, status_txt)
                     send_tg(
                         f"⌛ {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"انتهت مدة الجلوس ({tr['exit_time_str']}) والسعر الآن {p}"
+                        f"انتهى الإطار ({tr['dur_label']}) والسعر الآن {p}"
                     )
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
@@ -522,7 +552,7 @@ def monitor_active_trades(now_ksa):
                     update_trade_log_status(num, f"حقق الهدف 1 ({p}) ومستمر للهدف 2")
                     send_tg(
                         f"🎯 {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']}) حتى {tr['exit_time_str']}"
+                        f"حقق الهدف 1 عند {p} ومستمر للهدف 2 ({tr['t2']})"
                     )
                     time.sleep(1.1)
                 if p <= tr["t2"]:
@@ -546,11 +576,11 @@ def monitor_active_trades(now_ksa):
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
                 elif expired_hold:
-                    status_txt = f"انتهت مدة الجلوس بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهت مدة الجلوس ({p})"
+                    status_txt = f"انتهى الإطار بعد الهدف 1 ({p})" if tr["t1_hit"] else f"انتهى الإطار ({p})"
                     update_trade_log_status(num, status_txt)
                     send_tg(
                         f"⌛ {ticker} | صفقة #{num} ({side}) {dot}\n"
-                        f"انتهت مدة الجلوس ({tr['exit_time_str']}) والسعر الآن {p}"
+                        f"انتهى الإطار ({tr['dur_label']}) والسعر الآن {p}"
                     )
                     closed_tickers.append(ticker)
                     time.sleep(1.1)
@@ -561,7 +591,7 @@ def monitor_active_trades(now_ksa):
         active_trades.pop(t, None)
 
 
-def format_trade_message(prefix, num, ticker, side, grade_label, score, sizing_hint, p, pct, entry_low, entry_high, t1, t2, sl, hold_dur_txt, exit_time_str, reason_txt):
+def format_trade_message(prefix, num, ticker, side, grade_label, score, sizing_hint, p, pct, entry_low, entry_high, t1, t2, sl, dur_label, reason_txt):
     dot = "🟢" if side == "CALL" else "🔴"
     pct_txt = f"+{pct:.2f}%" if pct >= 0 else f"-{abs(pct):.2f}%"
     entry_txt = f"{entry_low} - {entry_high}" if entry_low != entry_high else f"{entry_low}"
@@ -575,7 +605,7 @@ def format_trade_message(prefix, num, ticker, side, grade_label, score, sizing_h
         f"الهدف 1: {t1}\n"
         f"الهدف 2: {t2}\n"
         f"الوقف: {sl}\n"
-        f"الجلوس في الجلسة: حتى {exit_time_str} ({hold_dur_txt})\n"
+        f"المدة: {dur_label}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"السبب: {reason_txt}"
     )
@@ -602,7 +632,7 @@ def scan_new_setups(now_ksa):
             if abs(pct) > abs(top_move[1]):
                 top_move = (ticker, pct)
 
-            if time.time() < tg_blocked_until or sent_this_scan >= 3:
+            if time.time() < tg_blocked_until or sent_this_scan >= 2:
                 continue
 
             if ticker in signaled_today or ticker in active_trades:
@@ -615,15 +645,13 @@ def scan_new_setups(now_ksa):
             vs_ma5_pct = q["vs_ma5_pct"]
 
             bullish_setup = (
-                recent_3_pct >= 0.12
-                and (p >= ma_fast or vs_ma5_pct >= 0.05)
-                and (abs(pct) >= 0.35 or recent_3_pct >= 0.18)
+                recent_3_pct >= 0.16
+                and p >= ma_fast
                 and is_clean_candle_flow("CALL", q)
             )
             bearish_setup = (
-                recent_3_pct <= -0.12
-                and (p <= ma_fast or vs_ma5_pct <= -0.05)
-                and (abs(pct) >= 0.35 or recent_3_pct <= -0.18)
+                recent_3_pct <= -0.16
+                and p <= ma_fast
                 and is_clean_candle_flow("PUT", q)
             )
 
@@ -632,8 +660,8 @@ def scan_new_setups(now_ksa):
                 grade_key, grade_label, score, sizing_hint = score_and_grade(
                     "CALL", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
                 )
-                exit_dt, exit_time_str, hold_dur_txt = compute_session_hold_info(
-                    now_ksa, p, t2, q["avg_5m_move"], recent_3_pct, "CALL"
+                exit_dt, dur_label = estimate_duration_label(
+                    now_ksa, p, t2, q["avg_daily_move"]
                 )
 
                 signal_count += 1
@@ -655,7 +683,7 @@ def scan_new_setups(now_ksa):
                     "sl": sl,
                     "t1_hit": False,
                     "exit_dt": exit_dt,
-                    "exit_time_str": exit_time_str
+                    "dur_label": dur_label
                 }
                 daily_trades_log.append({
                     "num": signal_count,
@@ -663,13 +691,13 @@ def scan_new_setups(now_ksa):
                     "side": "CALL",
                     "grade": grade_label,
                     "score": score,
-                    "status": f"متابعة حتى {exit_time_str}"
+                    "status": f"متابعة ({dur_label})"
                 })
 
                 prefix = "🚨 فرصة نخبة!\n" if grade_key == "elite" else ""
                 msg = format_trade_message(
                     prefix, signal_count, ticker, "CALL", grade_label, score, sizing_hint,
-                    p, pct, entry_low, entry_high, t1, t2, sl, hold_dur_txt, exit_time_str, reason_txt
+                    p, pct, entry_low, entry_high, t1, t2, sl, dur_label, reason_txt
                 )
                 send_tg(msg)
                 time.sleep(1.2)
@@ -679,8 +707,8 @@ def scan_new_setups(now_ksa):
                 grade_key, grade_label, score, sizing_hint = score_and_grade(
                     "PUT", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
                 )
-                exit_dt, exit_time_str, hold_dur_txt = compute_session_hold_info(
-                    now_ksa, p, t2, q["avg_5m_move"], recent_3_pct, "PUT"
+                exit_dt, dur_label = estimate_duration_label(
+                    now_ksa, p, t2, q["avg_daily_move"]
                 )
 
                 signal_count += 1
@@ -702,7 +730,7 @@ def scan_new_setups(now_ksa):
                     "sl": sl,
                     "t1_hit": False,
                     "exit_dt": exit_dt,
-                    "exit_time_str": exit_time_str
+                    "dur_label": dur_label
                 }
                 daily_trades_log.append({
                     "num": signal_count,
@@ -710,13 +738,13 @@ def scan_new_setups(now_ksa):
                     "side": "PUT",
                     "grade": grade_label,
                     "score": score,
-                    "status": f"متابعة حتى {exit_time_str}"
+                    "status": f"متابعة ({dur_label})"
                 })
 
                 prefix = "🚨 فرصة نخبة!\n" if grade_key == "elite" else ""
                 msg = format_trade_message(
                     prefix, signal_count, ticker, "PUT", grade_label, score, sizing_hint,
-                    p, pct, entry_low, entry_high, t1, t2, sl, hold_dur_txt, exit_time_str, reason_txt
+                    p, pct, entry_low, entry_high, t1, t2, sl, dur_label, reason_txt
                 )
                 send_tg(msg)
                 time.sleep(1.2)
@@ -761,5 +789,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بفلترة الشموع وتلخيص نهاية اليوم.")
+    send_tg("⚡ تم تشغيل البوت بالمدد الزمنية المحددة وتقرير نهاية اليوم.")
     main_loop()
