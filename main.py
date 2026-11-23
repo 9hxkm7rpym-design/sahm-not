@@ -25,7 +25,8 @@ active_trading_date = ""
 last_heartbeat_ts = 0.0
 tg_blocked_until = 0.0
 
-MAX_HOLD_MINUTES = 90
+MAX_HOLD_MINUTES = 120
+MIN_HOLD_MINUTES = 20
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -147,7 +148,12 @@ def fetch_quote_and_analysis(ticker):
         ma_slow = sum(closes[-15:]) / min(len(closes), 15)
 
         ref_3 = closes[-3] if len(closes) >= 3 else closes[0]
-        recent_3_change_pct = ((closes[-1] - ref_3) / ref_3) * 100 if ref_3 > 0 else 0.0
+        raw_3_pct = ((closes[-1] - ref_3) / ref_3) * 100 if ref_3 > 0 else 0.0
+        recent_3_change_pct = max(-8.0, min(8.0, raw_3_pct))
+
+        last_1_pct = ((closes[-1] - closes[-2]) / closes[-2]) * 100 if len(closes) >= 2 and closes[-2] > 0 else 0.0
+        prev_1_pct = ((closes[-2] - closes[-3]) / closes[-3]) * 100 if len(closes) >= 3 and closes[-3] > 0 else 0.0
+
         vs_ma5_pct = ((price - ma_fast) / ma_fast) * 100 if ma_fast > 0 else 0.0
         vs_ma15_pct = ((price - ma_slow) / ma_slow) * 100 if ma_slow > 0 else 0.0
 
@@ -156,8 +162,8 @@ def fetch_quote_and_analysis(ticker):
         last_vol = volumes[-1] if volumes else 0.0
         vol_ratio = round((last_vol / avg_vol), 2) if (avg_vol > 0 and last_vol > 0) else 0.0
 
-        recent_highs = highs[-30:] if len(highs) >= 30 else highs
-        recent_lows = lows[-30:] if len(lows) >= 30 else lows
+        recent_highs = highs[-24:] if len(highs) >= 24 else highs
+        recent_lows = lows[-24:] if len(lows) >= 24 else lows
         swing_highs, swing_lows = find_swing_highs_lows(recent_highs, recent_lows)
 
         short_high = max(highs[-6:])
@@ -165,8 +171,10 @@ def fetch_quote_and_analysis(ticker):
         chart_high = max(recent_highs)
         chart_low = min(recent_lows)
 
-        ranges = [h - l for h, l in zip(highs[-15:], lows[-15:]) if h > l]
-        avg_5m_move = max(sum(ranges) / len(ranges), price * 0.002) if ranges else price * 0.0025
+        # نطاق ذبذبة آخر 6 شمعات + متوسط حركة الشموع الفعلية
+        chop_range_pct = ((short_high - short_low) / short_low) * 100 if short_low > 0 else 0.0
+        ranges = [h - l for h, l in zip(highs[-15:], lows[-15:]) if h > l and (h - l) <= price * 0.03]
+        avg_5m_move = max(sum(ranges) / len(ranges), price * 0.0015) if ranges else price * 0.002
 
         return {
             "price": round(price, 2),
@@ -174,6 +182,9 @@ def fetch_quote_and_analysis(ticker):
             "ma_fast": round(ma_fast, 2),
             "ma_slow": round(ma_slow, 2),
             "recent_3_pct": round(recent_3_change_pct, 2),
+            "last_1_pct": round(last_1_pct, 2),
+            "prev_1_pct": round(prev_1_pct, 2),
+            "chop_range_pct": round(chop_range_pct, 2),
             "vs_ma5_pct": round(vs_ma5_pct, 2),
             "vs_ma15_pct": round(vs_ma15_pct, 2),
             "vol_ratio": vol_ratio,
@@ -190,11 +201,33 @@ def fetch_quote_and_analysis(ticker):
         return None
 
 
+def is_clean_candle_flow(side, q):
+    """
+    فلترة الذبذبة الميتة أو الشمعة المنفردة المتضخمة:
+    - استبعاد النطاق الميت الضيق جداً (< 0.25%)
+    - استبعاد الشمعة السابقة المنفردة المتضخمة التي يعقبها ارتداد معاكس قوي في الشمعة الأخيرة
+    """
+    if q["chop_range_pct"] < 0.25:
+        return False
+
+    prev_1 = q["prev_1_pct"]
+    last_1 = q["last_1_pct"]
+
+    if side == "CALL":
+        spike_then_fade = prev_1 >= 0.80 and last_1 <= -0.35
+        dead_last_candle = last_1 < -0.15
+        return not (spike_then_fade or dead_last_candle)
+    else:
+        spike_then_fade = prev_1 <= -0.80 and last_1 >= 0.35
+        dead_last_candle = last_1 > 0.15
+        return not (spike_then_fade or dead_last_candle)
+
+
 def compute_chart_levels(side, q):
     p = q["price"]
     step = q["avg_5m_move"]
     ma_fast = q["ma_fast"]
-    buffer_amt = max(step * 0.25, p * 0.0008)
+    buffer_amt = max(step * 0.35, p * 0.001)
 
     if side == "CALL":
         lows_below = sorted([x for x in q["swing_lows"] if x < p], reverse=True)
@@ -204,10 +237,10 @@ def compute_chart_levels(side, q):
         else:
             sl = round(min(q["short_low"], ma_fast) - buffer_amt, 2)
         if sl >= p:
-            sl = round(p - max(step * 1.2, p * 0.003), 2)
+            sl = round(p - max(step * 1.3, p * 0.0035), 2)
 
         highs_above = sorted([x for x in q["swing_highs"] if x > p])
-        min_t1 = p + max(step * 1.5, p * 0.0025)
+        min_t1 = p + max(step * 1.6, p * 0.003)
         above_min_t1 = [x for x in highs_above if x >= min_t1]
         if above_min_t1:
             t1 = round(above_min_t1[0], 2)
@@ -216,11 +249,11 @@ def compute_chart_levels(side, q):
         else:
             t1 = round(max(q["short_high"], min_t1), 2)
 
-        above_t1 = [x for x in highs_above if x > t1 + max(step * 0.8, p * 0.0015)]
+        above_t1 = [x for x in highs_above if x > t1 + max(step * 0.9, p * 0.0018)]
         if above_t1:
             t2 = round(above_t1[0], 2)
         else:
-            t2 = round(max(q["chart_high"], t1 + max(step * 1.5, p * 0.0025)), 2)
+            t2 = round(max(q["chart_high"], t1 + max(step * 1.6, p * 0.003)), 2)
 
         low_zone = round(min(p, ma_fast) if abs(p - ma_fast) <= step * 1.2 else p - (step * 0.2), 2)
         high_zone = round(max(p, low_zone + (step * 0.3)), 2)
@@ -234,10 +267,10 @@ def compute_chart_levels(side, q):
         else:
             sl = round(max(q["short_high"], ma_fast) + buffer_amt, 2)
         if sl <= p:
-            sl = round(p + max(step * 1.2, p * 0.003), 2)
+            sl = round(p + max(step * 1.3, p * 0.0035), 2)
 
         lows_below = sorted([x for x in q["swing_lows"] if x < p], reverse=True)
-        max_t1 = p - max(step * 1.5, p * 0.0025)
+        max_t1 = p - max(step * 1.6, p * 0.003)
         below_max_t1 = [x for x in lows_below if x <= max_t1]
         if below_max_t1:
             t1 = round(below_max_t1[0], 2)
@@ -246,22 +279,27 @@ def compute_chart_levels(side, q):
         else:
             t1 = round(min(q["short_low"], max_t1), 2)
 
-        below_t1 = [x for x in lows_below if x < t1 - max(step * 0.8, p * 0.0015)]
+        below_t1 = [x for x in lows_below if x < t1 - max(step * 0.9, p * 0.0018)]
         if below_t1:
             t2 = round(below_t1[0], 2)
         else:
-            t2 = round(min(q["chart_low"], t1 - max(step * 1.5, p * 0.0025)), 2)
+            t2 = round(min(q["chart_low"], t1 - max(step * 1.6, p * 0.003)), 2)
 
         high_zone = round(max(p, ma_fast) if abs(p - ma_fast) <= step * 1.2 else p + (step * 0.2), 2)
         low_zone = round(min(p, high_zone - (step * 0.3)), 2)
         return low_zone, high_zone, t1, t2, sl
 
 
-def compute_session_hold_info(now_ksa, current_price, target_price, avg_5m_move):
+def compute_session_hold_info(now_ksa, current_price, target_price, avg_5m_move, recent_3_pct, side):
     dist = abs(target_price - current_price)
-    bars_needed = max(2.0, dist / max(avg_5m_move, 0.01))
-    est_mins = int(round(bars_needed * 5 * 1.35))
-    hold_mins = max(25, min(MAX_HOLD_MINUTES, est_mins))
+    step = max(avg_5m_move, 0.01)
+    candles_needed = dist / step
+
+    aligned_momentum = (side == "CALL" and recent_3_pct >= 0.15) or (side == "PUT" and recent_3_pct <= -0.15)
+    pace_factor = 1.15 if aligned_momentum else 1.45
+
+    raw_mins = candles_needed * 5.0 * pace_factor
+    hold_mins = max(MIN_HOLD_MINUTES, min(MAX_HOLD_MINUTES, int(round(raw_mins))))
 
     session_end_dt = now_ksa.replace(hour=23, minute=55, second=0, microsecond=0)
     exit_dt = min(now_ksa + timedelta(minutes=hold_mins), session_end_dt)
@@ -281,58 +319,68 @@ def score_and_grade(side, price, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct)
     abs_pct = abs(pct)
 
     if abs_pct >= 2.0:
-        score += 30
+        score += 25
     elif abs_pct >= 1.0:
-        score += 22
-    elif abs_pct >= 0.4:
-        score += 15
+        score += 18
+    elif abs_pct >= 0.5:
+        score += 12
     else:
-        score += 8
+        score += 6
 
+    trend_aligned = False
     if side == "CALL":
-        if price >= ma_fast and ma_fast >= ma_slow:
+        if price > ma_fast and ma_fast >= ma_slow:
             score += 30
-        elif price >= ma_fast * 0.997 and ma_fast >= ma_slow * 0.995:
-            score += 20
+            trend_aligned = True
+        elif price >= ma_fast:
+            score += 18
         else:
-            score += 10
+            score += 6
     else:
-        if price <= ma_fast and ma_fast <= ma_slow:
+        if price < ma_fast and ma_fast <= ma_slow:
             score += 30
-        elif price <= ma_fast * 1.003 and ma_fast <= ma_slow * 1.005:
-            score += 20
+            trend_aligned = True
+        elif price <= ma_fast:
+            score += 18
         else:
-            score += 10
+            score += 6
 
-    if vol_ratio >= 1.2:
+    if vol_ratio >= 1.3:
         score += 20
-    elif vol_ratio >= 0.7:
+    elif vol_ratio >= 1.0:
         score += 15
-    elif vol_ratio >= 0.3:
-        score += 10
+    elif vol_ratio >= 0.6:
+        score += 9
     else:
-        score += 5
+        score += 4
 
+    strong_3_candles = False
     if side == "CALL":
-        if recent_3_pct >= 0.15:
-            score += 20
+        if recent_3_pct >= 0.25:
+            score += 25
+            strong_3_candles = True
+        elif recent_3_pct >= 0.12:
+            score += 16
         elif recent_3_pct >= 0.0:
-            score += 12
+            score += 8
         else:
-            score += 5
+            score += 2
     else:
-        if recent_3_pct <= -0.15:
-            score += 20
+        if recent_3_pct <= -0.25:
+            score += 25
+            strong_3_candles = True
+        elif recent_3_pct <= -0.12:
+            score += 16
         elif recent_3_pct <= 0.0:
-            score += 12
+            score += 8
         else:
-            score += 5
+            score += 2
 
     score = min(100, score)
 
-    if score >= 75:
+    if score >= 85 and trend_aligned and strong_3_candles and vol_ratio >= 1.0:
         return "elite", "⭐ نخبة", score, "مسك موجة كاملة"
-    elif score >= 50:
+    elif score >= 62:
         return "strong", "🔥 ممتازة", score, "مسك أهداف متدرجة"
     else:
         return "good", "⚡ جيدة", score, "دخول خفيف"
@@ -378,13 +426,29 @@ def send_end_of_day_report(date_str, now_ksa):
             f"#{t['num']} {t['ticker']} ({t['side']}) [{t['grade']}] — {t['status']}"
             for t in daily_trades_log
         )
+        best_trade = max(daily_trades_log, key=lambda x: x.get("score", 0))
+        best_txt = f"#{best_trade['num']} {best_trade['ticker']} ({best_trade['score']}/100)"
+
+        calls_cnt = sum(1 for t in daily_trades_log if t["side"] == "CALL")
+        puts_cnt = sum(1 for t in daily_trades_log if t["side"] == "PUT")
+        if calls_cnt > puts_cnt:
+            bias_txt = f"غالبية CALL ({calls_cnt} مقابل {puts_cnt})"
+        elif puts_cnt > calls_cnt:
+            bias_txt = f"غالبية PUT ({puts_cnt} مقابل {calls_cnt})"
+        else:
+            bias_txt = f"متوازن ({calls_cnt} CALL / {puts_cnt} PUT)"
     else:
         companies_lines = "لا توجد صفقات مسجلة اليوم."
+        best_txt = "لا يوجد"
+        bias_txt = "لا يوجد"
 
     msg = (
         f"📊 تقرير نهاية اليوم ({date_str})\n"
         f"━━━━━━━━━━━━━━━\n"
         f"🏢 أسماء الشركات وصفقات اليوم:\n{companies_lines}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🏆 أقوى صفقة اليوم: {best_txt}\n"
+        f"🧭 غالبية الاتجاه: {bias_txt}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📌 إجمالي صفقات اليوم: {signal_count}\n"
         f"🏅 الدرجات: ⭐ نخبة ({grade_counts['elite']}) | 🔥 ممتازة ({grade_counts['strong']}) | ⚡ جيدة ({grade_counts['good']})\n"
@@ -549,31 +613,32 @@ def scan_new_setups(now_ksa):
             vol_ratio = q["vol_ratio"]
             recent_3_pct = q["recent_3_pct"]
             vs_ma5_pct = q["vs_ma5_pct"]
-            vs_ma15_pct = q["vs_ma15_pct"]
 
-            # تصفية أوضح لتجنب فتح صفقات عشوائية على كل الأسهم دفعة واحدة
             bullish_setup = (
                 recent_3_pct >= 0.12
                 and (p >= ma_fast or vs_ma5_pct >= 0.05)
                 and (abs(pct) >= 0.35 or recent_3_pct >= 0.18)
+                and is_clean_candle_flow("CALL", q)
             )
             bearish_setup = (
                 recent_3_pct <= -0.12
                 and (p <= ma_fast or vs_ma5_pct <= -0.05)
                 and (abs(pct) >= 0.35 or recent_3_pct <= -0.18)
+                and is_clean_candle_flow("PUT", q)
             )
 
             if bullish_setup:
                 entry_low, entry_high, t1, t2, sl = compute_chart_levels("CALL", q)
-                exit_dt, exit_time_str, hold_dur_txt = compute_session_hold_info(now_ksa, p, t2, q["avg_5m_move"])
+                grade_key, grade_label, score, sizing_hint = score_and_grade(
+                    "CALL", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
+                )
+                exit_dt, exit_time_str, hold_dur_txt = compute_session_hold_info(
+                    now_ksa, p, t2, q["avg_5m_move"], recent_3_pct, "CALL"
+                )
 
                 signal_count += 1
                 sent_this_scan += 1
                 signaled_today.add(ticker)
-
-                grade_key, grade_label, score, sizing_hint = score_and_grade(
-                    "CALL", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
-                )
                 grade_counts[grade_key] += 1
 
                 reason_txt = build_trade_reason(
@@ -597,6 +662,7 @@ def scan_new_setups(now_ksa):
                     "ticker": ticker,
                     "side": "CALL",
                     "grade": grade_label,
+                    "score": score,
                     "status": f"متابعة حتى {exit_time_str}"
                 })
 
@@ -610,15 +676,16 @@ def scan_new_setups(now_ksa):
 
             elif bearish_setup:
                 entry_low, entry_high, t1, t2, sl = compute_chart_levels("PUT", q)
-                exit_dt, exit_time_str, hold_dur_txt = compute_session_hold_info(now_ksa, p, t2, q["avg_5m_move"])
+                grade_key, grade_label, score, sizing_hint = score_and_grade(
+                    "PUT", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
+                )
+                exit_dt, exit_time_str, hold_dur_txt = compute_session_hold_info(
+                    now_ksa, p, t2, q["avg_5m_move"], recent_3_pct, "PUT"
+                )
 
                 signal_count += 1
                 sent_this_scan += 1
                 signaled_today.add(ticker)
-
-                grade_key, grade_label, score, sizing_hint = score_and_grade(
-                    "PUT", p, pct, ma_fast, ma_slow, vol_ratio, recent_3_pct
-                )
                 grade_counts[grade_key] += 1
 
                 reason_txt = build_trade_reason(
@@ -642,6 +709,7 @@ def scan_new_setups(now_ksa):
                     "ticker": ticker,
                     "side": "PUT",
                     "grade": grade_label,
+                    "score": score,
                     "status": f"متابعة حتى {exit_time_str}"
                 })
 
@@ -693,5 +761,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بمستويات الشارت الحقيقية وتصفية أصدق للفرص.")
+    send_tg("⚡ تم تشغيل البوت بفلترة الشموع وتلخيص نهاية اليوم.")
     main_loop()
