@@ -14,6 +14,11 @@ WATCHLIST = [
     "ROKU", "SPY", "XYZ", "UBER", "V", "WMT", "XOM", "PFE", "SOFI"
 ]
 
+# إعدادات جلسة اليوم المختصرة (بتوقيت السعودية KSA)
+START_SCAN_TIME = dtime(17, 55)     # بدء الفحص بعد 25 دقيقة من الافتتاح
+NEW_SIGNALS_CUTOFF = dtime(20, 0)   # إيقاف الصفقات الجديدة قبل الإغلاق المبكر بوقت كافٍ
+MARKET_CLOSE_TIME = dtime(21, 0)    # الإغلاق المبكر للجلسة (9:00 PM KSA)
+
 active_trades = {}
 daily_trades_log = []
 signaled_today = set()
@@ -22,6 +27,7 @@ stats = {"wins": 0, "losses": 0}
 grade_counts = {"elite": 0, "strong": 0, "good": 0}
 eod_reported_date = ""
 active_trading_date = ""
+scan_started_notified_date = ""
 last_heartbeat_ts = 0.0
 tg_blocked_until = 0.0
 
@@ -85,11 +91,16 @@ def ksa_now():
     return datetime.now(timezone(timedelta(hours=3)))
 
 
-def is_us_winter_open(now_ksa):
+def is_session_window(now_ksa):
     if now_ksa.weekday() >= 5:
         return False
     t = now_ksa.time()
-    return dtime(17, 30) <= t <= dtime(23, 59)
+    return START_SCAN_TIME <= t <= MARKET_CLOSE_TIME
+
+
+def can_send_new_signal(now_ksa):
+    t = now_ksa.time()
+    return START_SCAN_TIME <= t <= NEW_SIGNALS_CUTOFF
 
 
 def find_swing_highs_lows(highs, lows):
@@ -617,6 +628,7 @@ def scan_new_setups(now_ksa):
     missing = []
     top_move = ("-", 0.0)
     sent_this_scan = 0
+    allow_new = can_send_new_signal(now_ksa)
 
     for ticker in WATCHLIST:
         try:
@@ -632,7 +644,7 @@ def scan_new_setups(now_ksa):
             if abs(pct) > abs(top_move[1]):
                 top_move = (ticker, pct)
 
-            if time.time() < tg_blocked_until or sent_this_scan >= 2:
+            if not allow_new or time.time() < tg_blocked_until or sent_this_scan >= 2:
                 continue
 
             if ticker in signaled_today or ticker in active_trades:
@@ -755,20 +767,25 @@ def scan_new_setups(now_ksa):
     if now_ts - last_heartbeat_ts >= 300:
         last_heartbeat_ts = now_ts
         miss_txt = f" | ناقص: {','.join(missing)}" if missing else ""
+        mode_txt = "إرسال نشط" if allow_new else "متابعة فقط (إيقاف الصفقات الجديدة)"
         send_tg(
-            f"📡 نبضة فحص: قراءة {ok_count}/{len(WATCHLIST)} سهم{miss_txt} | أعلى حركة: {top_move[0]} ({top_move[1]:+.2f}%) | صفقات اليوم: {signal_count}"
+            f"📡 نبضة فحص ({mode_txt}): قراءة {ok_count}/{len(WATCHLIST)} سهم{miss_txt} | أعلى حركة: {top_move[0]} ({top_move[1]:+.2f}%) | صفقات اليوم: {signal_count}"
         )
 
 
 def main_loop():
+    global scan_started_notified_date
     while True:
         try:
             now_ksa = ksa_now()
             today_str = now_ksa.strftime("%Y-%m-%d")
 
-            if is_us_winter_open(now_ksa):
+            if is_session_window(now_ksa):
                 if active_trading_date != today_str:
                     reset_daily_counters(today_str)
+                if scan_started_notified_date != today_str:
+                    scan_started_notified_date = today_str
+                    send_tg("🟢 بدأت فترة الفحص الفعلي وإرسال الصفقات (5:55 PM - 8:00 PM) والإغلاق اليوم عند 9:00 PM.")
                 monitor_active_trades(now_ksa)
                 scan_new_setups(now_ksa)
                 time.sleep(10)
@@ -777,11 +794,10 @@ def main_loop():
                     now_ksa.weekday() < 5
                     and active_trading_date == today_str
                     and eod_reported_date != today_str
-                    and now_ksa.time() >= dtime(0, 1)
-                    and now_ksa.time() <= dtime(4, 0)
+                    and now_ksa.time() > MARKET_CLOSE_TIME
                 ):
                     send_end_of_day_report(today_str, now_ksa)
-                time.sleep(45)
+                time.sleep(30)
         except Exception as e:
             print(f"Main loop error: {e}")
             time.sleep(5)
@@ -789,5 +805,5 @@ def main_loop():
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    send_tg("⚡ تم تشغيل البوت بالمدد الزمنية المحددة وتقرير نهاية اليوم.")
+    send_tg("⚡ تم تشغيل البوت بإعدادات اليوم المختصرة (الفحص 5:55 PM، إيقاف الصفقات الجديدة 8:00 PM، الإغلاق 9:00 PM).")
     main_loop()
